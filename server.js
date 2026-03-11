@@ -28,13 +28,17 @@ const ALLOWED_ORIGINS = [
   "http://localhost:8080",
   "http://127.0.0.1:8080",
   "http://localhost:5173",
+  "https://fetch-liart-gamma.vercel.app",
   process.env.FRONTEND_URL,
 ].filter(Boolean);
 
 const BLOCKED_DOMAINS = [
+  /* ── YOUR SITE — hardcoded protection ── */
+  "fetch-liart-gamma.vercel.app", // your Vercel frontend — PROTECTED
+  "fetch-v1.onrender.com", // your Render backend — prevent self-fetch
+  /* ── env-based override (set FRONTEND_DOMAIN in Render dashboard) ── */
   process.env.FRONTEND_DOMAIN,
-  "fetch-app.vercel.app",
-  "fetch-app.netlify.app",
+  /* ── always block local / private addresses ── */
   "localhost",
   "127.0.0.1",
   "0.0.0.0",
@@ -169,7 +173,7 @@ async function fetchRaw(url, timeout = 12000) {
     timeout,
     responseType: "arraybuffer",
     maxRedirects: 6,
-    maxContentLength: 12 * 1024 * 1024, // 12 MB cap
+    maxContentLength: 12 * 1024 * 1024,
     headers: {
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -199,7 +203,6 @@ async function fetchRaw(url, timeout = 12000) {
 
   const buf = Buffer.from(res.data);
 
-  /* Sniff charset from HTML meta if UTF-8 decode contains garbage */
   const sniffed = buf.toString("latin1");
   const metaM = sniffed.match(/<meta[^>]+charset=["']?([^"'\s;>]+)/i);
   if (metaM && metaM[1] && !charset.toLowerCase().startsWith("utf")) {
@@ -282,11 +285,9 @@ app.post("/api/fetch", async (req, res) => {
   /* ── Token validation (production only) ── */
   if (process.env.NODE_ENV === "production") {
     if (!validateToken(token, timestamp)) {
-      return res
-        .status(401)
-        .json({
-          error: "Invalid or expired request token. Refresh and try again.",
-        });
+      return res.status(401).json({
+        error: "Invalid or expired request token. Refresh and try again.",
+      });
     }
   }
 
@@ -319,11 +320,9 @@ app.post("/api/fetch", async (req, res) => {
   if (
     BLOCKED_DOMAINS.some((d) => hostname === d || hostname.endsWith("." + d))
   ) {
-    return res
-      .status(403)
-      .json({
-        error: "🔒 This domain is protected and cannot be scraped by FETCH.",
-      });
+    return res.status(403).json({
+      error: "🔒 This domain is protected and cannot be scraped by FETCH.",
+    });
   }
 
   /* ══════════════════════════════════════
@@ -412,7 +411,7 @@ app.post("/api/fetch", async (req, res) => {
       .filter(Boolean)
       .join("\n\n");
 
-    /* ── 8. Clean HTML (replace extracted inline blocks with references) ── */
+    /* ── 8. Clean HTML ── */
     $("script:not([src])").each((_, el) =>
       $(el).html("/* extracted — see JS tab */"),
     );
@@ -440,7 +439,6 @@ app.post("/api/fetch", async (req, res) => {
     /* ── 10. Asset discovery ── */
     const assets = [];
     if (includeAssets) {
-      /* Images */
       $("img").each((_, el) => {
         const src =
           $(el).attr("src") ||
@@ -456,7 +454,6 @@ app.post("/api/fetch", async (req, res) => {
               alt: $(el).attr("alt") || "",
             });
         }
-        /* srcset */
         const ss = $(el).attr("srcset");
         if (ss) {
           ss.split(",").forEach((entry) => {
@@ -469,15 +466,12 @@ app.post("/api/fetch", async (req, res) => {
           });
         }
       });
-      /* CSS files */
       cssLinks.forEach((u2) =>
         assets.push({ type: "stylesheet", tag: "link", url: u2 }),
       );
-      /* JS files */
       scriptSrcs.forEach((u2) =>
         assets.push({ type: "script", tag: "script", url: u2 }),
       );
-      /* Favicons / icons */
       $("link").each((_, el) => {
         const rel = $(el).attr("rel") || "";
         const href = $(el).attr("href");
@@ -487,7 +481,6 @@ app.post("/api/fetch", async (req, res) => {
           if (abs) assets.push({ type: "icon", tag: "link", url: abs });
         }
       });
-      /* Video & audio */
       $("video source, audio source").each((_, el) => {
         const src = $(el).attr("src");
         if (src) {
@@ -496,7 +489,6 @@ app.post("/api/fetch", async (req, res) => {
             assets.push({ type: classifyAsset(abs), tag: "source", url: abs });
         }
       });
-      /* Fonts in CSS */
       const fontRegex =
         /url\(['"]?([^'")\s]+\.(?:woff2?|ttf|otf|eot)[^'")\s]*)['"]?\)/gi;
       let fm;
@@ -507,7 +499,6 @@ app.post("/api/fetch", async (req, res) => {
       }
     }
 
-    /* Deduplicate assets */
     const seenUrls = new Set();
     const dedupedAssets = assets.filter((a) => {
       if (seenUrls.has(a.url)) return false;
@@ -563,11 +554,9 @@ app.post("/api/fetch", async (req, res) => {
       err.code === "ECONNABORTED" ||
       err.name === "AbortError"
     )
-      return res
-        .status(504)
-        .json({
-          error: "Request timed out. The site took too long to respond.",
-        });
+      return res.status(504).json({
+        error: "Request timed out. The site took too long to respond.",
+      });
     if (err.code === "ENOTFOUND")
       return res
         .status(502)
@@ -580,21 +569,17 @@ app.post("/api/fetch", async (req, res) => {
         .status(502)
         .json({ error: "SSL certificate error on target site." });
     if (err.response?.status === 403)
-      return res
-        .status(403)
-        .json({
-          error: "The target site denied access (403). It may block scrapers.",
-        });
+      return res.status(403).json({
+        error: "The target site denied access (403). It may block scrapers.",
+      });
     if (err.response?.status === 404)
       return res
         .status(404)
         .json({ error: "Page not found on that site (404)." });
     if (err.response?.status === 429)
-      return res
-        .status(429)
-        .json({
-          error: "The target site is rate-limiting us. Try again in a moment.",
-        });
+      return res.status(429).json({
+        error: "The target site is rate-limiting us. Try again in a moment.",
+      });
 
     return res.status(500).json({ error: `Scrape failed: ${err.message}` });
   }
@@ -626,7 +611,6 @@ app.use((err, req, res, _next) => {
 app.listen(PORT, () => {
   console.log(`\n⚡  FETCH backend  →  http://localhost:${PORT}`);
   console.log(`    Health         →  http://localhost:${PORT}/health`);
-  console.log(
-    `    Mode           →  ${process.env.NODE_ENV || "development"}\n`,
-  );
+  console.log(`    Mode           →  ${process.env.NODE_ENV || "development"}`);
+  console.log(`    Protected      →  ${BLOCKED_DOMAINS.join(", ")}\n`);
 });
