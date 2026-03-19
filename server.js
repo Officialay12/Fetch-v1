@@ -1,7 +1,6 @@
 /* ═══════════════════════════════════════════════
    FETCH — server.js  (Backend Scraper API)
    by ayocodes  |  v1.0 — Production Ready
-   Deploy: Render / Railway / Fly.io
 ═══════════════════════════════════════════════ */
 
 "use strict";
@@ -68,32 +67,6 @@ const USER_AGENTS = [
 ];
 
 /* ══════════════════════════════════════════════
-   TOKEN AUTH
-══════════════════════════════════════════════ */
-function generateToken(timestamp) {
-  return crypto
-    .createHmac("sha256", API_SECRET)
-    .update(`fetch:${timestamp}`)
-    .digest("hex");
-}
-
-function validateToken(token, timestamp) {
-  if (!token || !timestamp) return false;
-  const ts = parseInt(timestamp, 10);
-  const now = Date.now();
-  if (isNaN(ts) || Math.abs(now - ts) > 300000) return false; // 5 minutes
-  const expected = generateToken(ts.toString());
-  try {
-    return crypto.timingSafeEqual(
-      Buffer.from(token.padEnd(64, "0")),
-      Buffer.from(expected.padEnd(64, "0")),
-    );
-  } catch {
-    return false;
-  }
-}
-
-/* ══════════════════════════════════════════════
    MIDDLEWARE
 ══════════════════════════════════════════════ */
 app.set("trust proxy", 1);
@@ -133,6 +106,27 @@ app.use("/api/", globalLimiter);
 app.use("/api/fetch", fetchLimiter);
 
 /* ══════════════════════════════════════════════
+   ROOT ENDPOINT - FIXES THE 404 ERROR
+══════════════════════════════════════════════ */
+app.get("/", (req, res) => {
+  res.json({
+    success: true,
+    service: "FETCH API by ayocodes",
+    version: "1.0.0",
+    status: "online",
+    message: "Welcome to FETCH API - Web Scraper Backend",
+    endpoints: {
+      health: "/health",
+      token: "/api/token",
+      fetch: "/api/fetch (POST)",
+    },
+    documentation:
+      "Send POST requests to /api/fetch with { url: 'https://example.com' }",
+    time: new Date().toISOString(),
+  });
+});
+
+/* ══════════════════════════════════════════════
    HEALTH CHECK ENDPOINT
 ══════════════════════════════════════════════ */
 app.get("/health", (_, res) => {
@@ -142,9 +136,35 @@ app.get("/health", (_, res) => {
     version: "1.0.0",
     time: new Date().toISOString(),
     uptime: process.uptime(),
-    endpoints: ["/api/token", "/api/fetch", "/health"],
+    endpoints: ["/", "/health", "/api/token", "/api/fetch"],
   });
 });
+
+/* ══════════════════════════════════════════════
+   TOKEN AUTH FUNCTIONS
+══════════════════════════════════════════════ */
+function generateToken(timestamp) {
+  return crypto
+    .createHmac("sha256", API_SECRET)
+    .update(`fetch:${timestamp}`)
+    .digest("hex");
+}
+
+function validateToken(token, timestamp) {
+  if (!token || !timestamp) return false;
+  const ts = parseInt(timestamp, 10);
+  const now = Date.now();
+  if (isNaN(ts) || Math.abs(now - ts) > 300000) return false; // 5 minutes
+  const expected = generateToken(ts.toString());
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(token.padEnd(64, "0")),
+      Buffer.from(expected.padEnd(64, "0")),
+    );
+  } catch {
+    return false;
+  }
+}
 
 /* ══════════════════════════════════════════════
    TOKEN ENDPOINT
@@ -694,11 +714,13 @@ app.post("/api/fetch", async (req, res) => {
   }
 });
 
-/* ── 404 ── */
-app.use((_, res) => {
+/* ── 404 handler for any other routes ── */
+app.use("*", (req, res) => {
   res.status(404).json({
     success: false,
-    error: "Endpoint not found.",
+    error:
+      "Endpoint not found. Available endpoints: GET /, GET /health, GET /api/token, POST /api/fetch",
+    requestedPath: req.originalUrl,
   });
 });
 
@@ -714,9 +736,12 @@ app.use((err, req, res, _next) => {
 /* ── START ── */
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`\n⚡  FETCH BACKEND  →  http://0.0.0.0:${PORT}`);
-  console.log(`    Health         →  http://0.0.0.0:${PORT}/health`);
-  console.log(`    Token          →  http://0.0.0.0:${PORT}/api/token`);
-  console.log(`    Fetch          →  http://0.0.0.0:${PORT}/api/fetch`);
-  console.log(`    Mode           →  ${process.env.NODE_ENV || "development"}`);
-  console.log(`    Protected      →  ${BLOCKED_DOMAINS.join(", ")}\n`);
+  console.log(`    Root            →  http://0.0.0.0:${PORT}/`);
+  console.log(`    Health          →  http://0.0.0.0:${PORT}/health`);
+  console.log(`    Token           →  http://0.0.0.0:${PORT}/api/token`);
+  console.log(`    Fetch (POST)    →  http://0.0.0.0:${PORT}/api/fetch`);
+  console.log(
+    `    Mode            →  ${process.env.NODE_ENV || "development"}`,
+  );
+  console.log(`    Protected       →  ${BLOCKED_DOMAINS.join(", ")}\n`);
 });
