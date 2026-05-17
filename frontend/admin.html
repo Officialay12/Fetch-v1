@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FETCH · Admin Console</title>
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link
+    href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="admin.css">
+
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-1E8TJS9JFN"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+
+    gtag('config', 'G-1E8TJS9JFN');
+  </script>
+
+</head>
+
+<body>
+
+  <!-- ══════════════════════════════════════════════
+       LOCK SCREEN
+  ══════════════════════════════════════════════ -->
+  <div id="lockScreen">
+    <div class="lock-logo">[<span>FETCH</span>]</div>
+    <div class="lock-subtitle">Admin Console &middot; Private Access</div>
+    <div class="lock-form">
+      <input type="text" class="lock-input" id="lockUser" placeholder="Admin username" autocomplete="off"
+        spellcheck="false" value="ayocodes">
+      <input type="password" class="lock-input" id="lockPass" placeholder="Admin password"
+        autocomplete="current-password">
+      <button class="lock-btn" id="lockBtn">
+        <span class="lock-btn-text">ACCESS CONSOLE</span>
+        <span class="lock-spinner" aria-hidden="true"></span>
+      </button>
+      <div class="lock-cold" id="lockCold">
+        <span class="spin-sm"></span>
+        <span id="lockColdMsg"></span>
+      </div>
+      <div class="lock-error" id="lockError" role="alert" aria-live="polite"></div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════
+       MAIN APP
+  ══════════════════════════════════════════════ -->
+  <div id="app">
+    <div class="rbar" id="rbar"></div>
+
+    <!-- TOP BAR -->
+    <div class="topbar">
+      <div class="topbar-logo">
+        [<span>FETCH</span>]
+        <span style="color:var(--muted);font-size:.7rem;margin-left:.4rem">admin</span>
+      </div>
+      <div class="live-badge">LIVE</div>
+      <div class="topbar-sep"></div>
+      <div class="topbar-actions">
+        <div class="topbar-time" id="topbarTime"></div>
+        <button class="top-btn" id="refreshBtn">
+          <span class="spin"></span>&nbsp;Refresh
+        </button>
+        <button class="top-btn" id="exportBtn">&#8595; Export</button>
+        <button class="top-btn danger" id="logoutBtn">&#x2715; Logout</button>
+      </div>
+    </div>
+
+    <!-- BODY -->
+    <div class="main-body">
+
+      <!-- SIDEBAR -->
+      <div class="sidebar">
+        <div class="sidebar-section">Main</div>
+        <button class="nav-item active" data-page="overview">
+          <span class="nav-icon">&#9670;</span>
+          <span class="nav-label">Overview</span>
+        </button>
+        <button class="nav-item" data-page="users">
+          <span class="nav-icon">&#9673;</span>
+          <span class="nav-label">Users</span>
+          <span class="nav-badge" id="usersBadge">—</span>
+        </button>
+        <button class="nav-item" data-page="activity">
+          <span class="nav-icon">&#9678;</span>
+          <span class="nav-label">Activity</span>
+        </button>
+        <button class="nav-item" data-page="fetches">
+          <span class="nav-icon">&#9671;</span>
+          <span class="nav-label">Fetches</span>
+        </button>
+        <button class="nav-item" data-page="deobf">
+          <span class="nav-icon">&#9675;</span>
+          <span class="nav-label">Deobfuscator</span>
+        </button>
+        <div class="sidebar-section">System</div>
+        <button class="nav-item" data-page="health">
+          <span class="nav-icon">&#9633;</span>
+          <span class="nav-label">Health</span>
+        </button>
+      </div>
+
+      <!-- CONTENT -->
+      <div class="content" id="mainContent">
+
+        <!-- ── OVERVIEW PAGE ── -->
+        <div class="page active" id="page-overview">
+          <div class="page-header">
+            <div>
+              <div class="page-title">// dashboard</div>
+              <div class="page-subtitle">Overview</div>
+            </div>
+          </div>
+
+          <div class="stat-grid">
+            <div class="stat-card c-cyan">
+              <div class="stat-label">Total Users</div>
+              <div class="stat-val c-cyan" id="s-totalUsers">—</div>
+              <div class="stat-delta up" id="s-newToday"></div>
+            </div>
+            <div class="stat-card c-lime">
+              <div class="stat-label">Total Fetches</div>
+              <div class="stat-val c-lime" id="s-totalFetches">—</div>
+            </div>
+            <div class="stat-card c-amber">
+              <div class="stat-label">Deobfuscations</div>
+              <div class="stat-val c-amber" id="s-totalDeobf">—</div>
+            </div>
+            <div class="stat-card c-green">
+              <div class="stat-label">Active (30 days)</div>
+              <div class="stat-val c-green" id="s-active30">—</div>
+            </div>
+            <div class="stat-card c-purple">
+              <div class="stat-label">Google Users</div>
+              <div class="stat-val c-purple" id="s-googleUsers">—</div>
+            </div>
+            <div class="stat-card c-red">
+              <div class="stat-label">Server Uptime</div>
+              <div class="stat-val c-red" id="s-uptime" style="font-size:1rem">—</div>
+            </div>
+          </div>
+
+          <div class="chart-row">
+            <div class="chart-card">
+              <div class="chart-header">
+                <span>Fetches — last 7 days</span>
+                <span style="color:var(--muted);font-size:.65rem" id="chartTotal">—</span>
+              </div>
+              <div class="chart-body" id="fetchChart">
+                <div style="margin:auto;color:var(--muted)">Loading…</div>
+              </div>
+            </div>
+            <div class="chart-card">
+              <div class="chart-header"><span>Auth providers</span></div>
+              <div class="pie-wrap" id="providerPie">
+                <div style="color:var(--muted)">Loading…</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="feed-wrap">
+            <div class="feed-header">
+              <span class="feed-title">Live Activity Feed</span>
+              <span class="feed-live">LIVE</span>
+            </div>
+            <div class="feed-body" id="liveFeed">
+              <div class="log-line">
+                <span class="log-time">—</span>
+                <span class="badge warn">init</span>
+                <span class="log-msg">Waiting for data…</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="table-card">
+            <div class="table-header">
+              <span class="table-title">Recent Signups</span>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Provider</th>
+                  <th>Joined</th>
+                </tr>
+              </thead>
+              <tbody id="recentUsersBody">
+                <tr class="empty-row">
+                  <td colspan="4">Loading…</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div><!-- /page-overview -->
+
+        <!-- ── USERS PAGE ── -->
+        <div class="page" id="page-users">
+          <div class="page-header">
+            <div>
+              <div class="page-title">// users</div>
+              <div class="page-subtitle">All Users</div>
+            </div>
+            <div style="display:flex;gap:.5rem;">
+              <input type="text" class="search-inp" id="userSearch" placeholder="Search email or name…">
+              <button class="tbl-btn" id="refreshUsersBtn">↻ Refresh</button>
+            </div>
+          </div>
+          <div class="table-card">
+            <div class="table-header">
+              <span class="table-title" id="usersTableTitle">Users</span>
+              <select class="search-inp" id="providerFilter" style="width:130px;">
+                <option value="">All providers</option>
+                <option value="local">Local</option>
+                <option value="google">Google</option>
+                <option value="both">Both</option>
+              </select>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Provider</th>
+                  <th>Last Login</th>
+                  <th>Joined</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="usersTableBody">
+                <tr class="empty-row">
+                  <td colspan="7">Loading…</td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="pag-row">
+              <span id="usersPagInfo">— results</span>
+              <div class="pag-btns" id="usersPagBtns"></div>
+            </div>
+          </div>
+        </div><!-- /page-users -->
+
+        <!-- ── ACTIVITY PAGE ── -->
+        <div class="page" id="page-activity">
+          <div class="page-header">
+            <div>
+              <div class="page-title">// activity</div>
+              <div class="page-subtitle">Live Log</div>
+            </div>
+            <div>
+              <button class="tbl-btn" id="pauseBtn">⏸ Pause</button>
+              <button class="tbl-btn" id="clearLogBtn" style="margin-left:.5rem">✕ Clear</button>
+            </div>
+          </div>
+          <div class="feed-wrap" style="height:calc(100vh - 250px);">
+            <div class="feed-header">
+              <span class="feed-title">All Events</span>
+              <span class="feed-live">STREAMING</span>
+            </div>
+            <div class="feed-body" id="activityFeed"></div>
+          </div>
+        </div><!-- /page-activity -->
+
+        <!-- ── FETCHES PAGE ── -->
+        <div class="page" id="page-fetches">
+          <div class="page-header">
+            <div>
+              <div class="page-title">// fetches</div>
+              <div class="page-subtitle">Scrape History</div>
+            </div>
+            <input type="text" class="search-inp" id="fetchSearch" placeholder="Search URL or user…">
+          </div>
+          <div class="stat-grid">
+            <div class="stat-card c-cyan">
+              <div class="stat-label">Total Requests</div>
+              <div class="stat-val c-cyan" id="f-total">—</div>
+            </div>
+            <div class="stat-card c-green">
+              <div class="stat-label">Successful</div>
+              <div class="stat-val c-green" id="f-success">—</div>
+            </div>
+            <div class="stat-card c-red">
+              <div class="stat-label">Failed</div>
+              <div class="stat-val c-red" id="f-failed">—</div>
+            </div>
+            <div class="stat-card c-amber">
+              <div class="stat-label">Avg Response</div>
+              <div class="stat-val c-amber" id="f-avg">—</div>
+            </div>
+          </div>
+          <div class="table-card">
+            <div class="table-header">
+              <span class="table-title">Recent Fetches (last 200)</span>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>User</th>
+                  <th>URL</th>
+                  <th>Status</th>
+                  <th>Tier</th>
+                  <th>Duration</th>
+                </tr>
+              </thead>
+              <tbody id="fetchesTableBody">
+                <tr class="empty-row">
+                  <td colspan="6">Loading…</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div><!-- /page-fetches -->
+
+        <!-- ── DEOBFUSCATOR PAGE ── -->
+        <div class="page" id="page-deobf">
+          <div class="page-header">
+            <div>
+              <div class="page-title">// deobfuscator</div>
+              <div class="page-subtitle">AI Usage Log</div>
+            </div>
+          </div>
+          <div class="stat-grid">
+            <div class="stat-card c-amber">
+              <div class="stat-label">Total Requests</div>
+              <div class="stat-val c-amber" id="d-total">—</div>
+            </div>
+            <div class="stat-card c-green">
+              <div class="stat-label">Successful</div>
+              <div class="stat-val c-green" id="d-success">—</div>
+            </div>
+            <div class="stat-card c-red">
+              <div class="stat-label">Failed</div>
+              <div class="stat-val c-red" id="d-failed">—</div>
+            </div>
+            <div class="stat-card c-cyan">
+              <div class="stat-label">Unique Users</div>
+              <div class="stat-val c-cyan" id="d-users">—</div>
+            </div>
+          </div>
+          <div class="table-card">
+            <div class="table-header">
+              <span class="table-title">Deobfuscation Log (last 200)</span>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>User</th>
+                  <th>Input Size</th>
+                  <th>Status</th>
+                  <th>Model</th>
+                </tr>
+              </thead>
+              <tbody id="deobfTableBody">
+                <tr class="empty-row">
+                  <td colspan="5">Loading…</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div><!-- /page-deobf -->
+
+        <!-- ── HEALTH PAGE ── -->
+        <div class="page" id="page-health">
+          <div class="page-header">
+            <div>
+              <div class="page-title">// system</div>
+              <div class="page-subtitle">Server Health</div>
+            </div>
+            <button class="top-btn" id="pingHealthBtn">📡 Ping</button>
+          </div>
+          <div class="stat-grid">
+            <div class="stat-card c-green">
+              <div class="stat-label">Status</div>
+              <div class="stat-val c-green" id="h-status">—</div>
+            </div>
+            <div class="stat-card c-cyan">
+              <div class="stat-label">Version</div>
+              <div class="stat-val c-cyan" id="h-version">—</div>
+            </div>
+            <div class="stat-card c-lime">
+              <div class="stat-label">Uptime</div>
+              <div class="stat-val c-lime" id="h-uptime" style="font-size:1rem">—</div>
+            </div>
+            <div class="stat-card c-amber">
+              <div class="stat-label">MongoDB</div>
+              <div class="stat-val c-amber" id="h-db">—</div>
+            </div>
+          </div>
+          <div class="table-card">
+            <div class="table-header">
+              <span class="table-title">Scraper Tiers</span>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Tier</th>
+                  <th>Engine</th>
+                  <th>Status</th>
+                  <th>Description</th>
+                </tr>
+              </thead>
+              <tbody id="tiersTable">
+                <tr class="empty-row">
+                  <td colspan="4">Loading…</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="table-card">
+            <div class="table-header">
+              <span class="table-title">Raw /health Response</span>
+            </div>
+            <div style="padding:1rem;">
+              <pre id="healthRaw"
+                style="font-family:var(--font-mono);font-size:.72rem;color:var(--text2);white-space:pre-wrap;">—</pre>
+            </div>
+          </div>
+        </div><!-- /page-health -->
+
+      </div><!-- /content -->
+    </div><!-- /main-body -->
+  </div><!-- /app -->
+
+  <!-- USER MODAL -->
+  <div class="modal-backdrop" id="userModal">
+    <div class="modal">
+      <div class="modal-head">
+        <span class="modal-title">// user detail</span>
+        <button class="modal-close" id="modalCloseBtn">✕</button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+    </div>
+  </div>
+
+  <!-- TOASTS -->
+  <div class="toast-wrap" id="toastWrap"></div>
+
+  <script src="admin.js"></script>
+</body>
+
+</html>

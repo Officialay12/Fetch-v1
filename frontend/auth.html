@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="FETCH v2.0 — Sign in or create an account to start scraping and deobfuscating." />
+  <title>FETCH v2.0 — Sign In</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,700;1,400&family=Cormorant+Garamond:ital,wght@1,300;1,500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+  <link rel="stylesheet" href="auth.css" />
+
+  <!-- Google tag (gtag.js) -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-1E8TJS9JFN"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+
+    gtag('config', 'G-1E8TJS9JFN');
+  </script>
+
+</head>
+<body>
+
+  <!-- Background layers -->
+  <div class="grain" aria-hidden="true"></div>
+  <div class="grid-overlay" aria-hidden="true"></div>
+  <div class="glow glow-1" aria-hidden="true"></div>
+  <div class="glow glow-2" aria-hidden="true"></div>
+  <canvas id="bgCanvas" aria-hidden="true"></canvas>
+
+  <!-- Nav -->
+  <nav>
+    <a href="/" class="nav-logo">
+      <span class="bracket">[</span>FETCH<span class="bracket">]</span>
+    </a>
+    <span class="nav-tagline"></span>
+    <div class="nav-right">
+      <span class="nav-pill">v2.0.0</span>
+    </div>
+  </nav>
+
+  <!-- Main -->
+  <main>
+    <div class="auth-wrap">
+
+      <!-- Header -->
+      <div class="auth-header">
+        <div class="auth-eyebrow">
+          <span class="eyebrow-dot"></span>
+          Scrape · Deobfuscate · Extract
+        </div>
+        <h1 class="auth-title">Access<br /><em>the engine.</em></h1>
+      </div>
+
+      <!-- Card -->
+      <div class="auth-card">
+
+        <!-- Tab strip -->
+        <div class="tab-strip" role="tablist">
+          <button
+            class="tab-btn active"
+            id="tab-login"
+            role="tab"
+            aria-selected="true"
+            aria-controls="panel-login">
+            <i class="fa-solid fa-arrow-right-to-bracket" aria-hidden="true"></i>
+            Sign In
+          </button>
+          <button
+            class="tab-btn"
+            id="tab-register"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-register">
+            <i class="fa-solid fa-user-plus" aria-hidden="true"></i>
+            Create Account
+          </button>
+        </div>
+
+        <div class="form-body">
+
+          <!-- ══ LOGIN PANEL ══ -->
+          <div class="form-panel active" id="panel-login" role="tabpanel" aria-labelledby="tab-login">
+
+            <!-- Cold-start banner -->
+            <div class="cold-banner" id="coldBannerLogin">
+              <i class="fa-solid fa-circle-notch" aria-hidden="true"></i>
+              <span>Backend is waking up (Render cold start). This may take ~30 s — please wait…</span>
+            </div>
+
+            <!-- Google -->
+            <button class="google-btn" id="googleLoginBtn" type="button" aria-label="Continue with Google">
+              <svg class="google-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+              </svg>
+              <span id="googleLoginText">Continue with Google</span>
+            </button>
+
+            <div class="divider">
+              <div class="divider-line"></div>
+              <span>or sign in with email</span>
+              <div class="divider-line"></div>
+            </div>
+
+            <!-- Alert -->
+            <div class="form-alert error" id="loginAlert" role="alert" aria-live="polite">
+              <i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i>
+              <span id="loginAlertMsg"></span>
+            </div>
+
+            <!-- Form -->
+            <form id="loginForm" novalidate>
+              <div class="field">
+                <label for="loginEmail">Email address</label>
+                <div class="field-wrap" id="loginEmailWrap">
+                  <span class="field-icon"><i class="fa-solid fa-envelope" aria-hidden="true"></i></span>
+                  <input
+                    type="email" id="loginEmail" name="email"
+                    placeholder="you@example.com"
+                    autocomplete="email" required />
+                </div>
+                <div class="field-error" id="loginEmailErr">Please enter a valid email.</div>
+              </div>
+
+              <div class="field">
+                <label for="loginPassword">Password</label>
+                <div class="field-wrap" id="loginPwWrap">
+                  <span class="field-icon"><i class="fa-solid fa-lock" aria-hidden="true"></i></span>
+                  <input
+                    type="password" id="loginPassword" name="password"
+                    placeholder="••••••••"
+                    autocomplete="current-password" required />
+                  <button type="button" class="pw-toggle" id="loginPwToggle" aria-label="Toggle password visibility">
+                    <i class="fa-solid fa-eye" aria-hidden="true"></i>
+                  </button>
+                </div>
+                <div class="field-error" id="loginPwErr">Password is required.</div>
+              </div>
+
+              <button type="submit" class="submit-btn" id="loginBtn">
+                <span class="btn-label">
+                  <i class="fa-solid fa-bolt" aria-hidden="true"></i> Sign In to FETCH
+                </span>
+                <span class="btn-loader" aria-hidden="true"></span>
+              </button>
+            </form>
+
+            <p class="auth-footer">
+              Don't have an account?
+              <button type="button" class="auth-footer-switch" onclick="switchTab('register')">
+                Create one →
+              </button>
+            </p>
+          </div><!-- /panel-login -->
+
+          <!-- ══ REGISTER PANEL ══ -->
+          <div class="form-panel" id="panel-register" role="tabpanel" aria-labelledby="tab-register">
+
+            <!-- Cold-start banner -->
+            <div class="cold-banner" id="coldBannerRegister">
+              <i class="fa-solid fa-circle-notch" aria-hidden="true"></i>
+              <span>Backend is waking up (Render cold start). This may take ~30 s — please wait…</span>
+            </div>
+
+            <!-- Google -->
+            <button class="google-btn" id="googleRegisterBtn" type="button" aria-label="Continue with Google">
+              <svg class="google-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+              </svg>
+              <span id="googleRegisterText">Continue with Google</span>
+            </button>
+
+            <div class="divider">
+              <div class="divider-line"></div>
+              <span>or create with email</span>
+              <div class="divider-line"></div>
+            </div>
+
+            <!-- Alert -->
+            <div class="form-alert error" id="registerAlert" role="alert" aria-live="polite">
+              <i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i>
+              <span id="registerAlertMsg"></span>
+            </div>
+
+            <!-- Form -->
+            <form id="registerForm" novalidate>
+              <div class="field">
+                <label for="registerName">Display name</label>
+                <div class="field-wrap">
+                  <span class="field-icon"><i class="fa-solid fa-user" aria-hidden="true"></i></span>
+                  <input
+                    type="text" id="registerName" name="name"
+                    placeholder="Your name"
+                    autocomplete="name" />
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="registerEmail">Email address</label>
+                <div class="field-wrap" id="registerEmailWrap">
+                  <span class="field-icon"><i class="fa-solid fa-envelope" aria-hidden="true"></i></span>
+                  <input
+                    type="email" id="registerEmail" name="email"
+                    placeholder="you@example.com"
+                    autocomplete="email" required />
+                </div>
+                <div class="field-error" id="registerEmailErr">Please enter a valid email.</div>
+              </div>
+
+              <div class="field">
+                <label for="registerPassword">Password</label>
+                <div class="field-wrap" id="registerPwWrap">
+                  <span class="field-icon"><i class="fa-solid fa-lock" aria-hidden="true"></i></span>
+                  <input
+                    type="password" id="registerPassword" name="password"
+                    placeholder="Min. 6 characters"
+                    autocomplete="new-password" required />
+                  <button type="button" class="pw-toggle" id="registerPwToggle" aria-label="Toggle password visibility">
+                    <i class="fa-solid fa-eye" aria-hidden="true"></i>
+                  </button>
+                </div>
+                <div class="field-error" id="registerPwErr">Password must be at least 6 characters.</div>
+                <div class="strength-wrap" id="strengthWrap" style="display:none">
+                  <div class="strength-bar">
+                    <div class="strength-fill" id="strengthFill"></div>
+                  </div>
+                  <div class="strength-label" id="strengthLabel"></div>
+                </div>
+              </div>
+
+              <button type="submit" class="submit-btn" id="registerBtn">
+                <span class="btn-label">
+                  <i class="fa-solid fa-user-plus" aria-hidden="true"></i> Create Account
+                </span>
+                <span class="btn-loader" aria-hidden="true"></span>
+              </button>
+            </form>
+
+            <p class="auth-footer">
+              Already have an account?
+              <button type="button" class="auth-footer-switch" onclick="switchTab('login')">
+                Sign in →
+              </button>
+            </p>
+          </div><!-- /panel-register -->
+
+        </div><!-- /form-body -->
+      </div><!-- /auth-card -->
+
+      <p class="page-footer">
+        <span class="accent">[FETCH]</span> v2.0.0 by ayocodes · Secure · No ads · No tracking
+      </p>
+
+    </div><!-- /auth-wrap -->
+  </main>
+
+  <!-- Toast -->
+  <div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+
+  <script src="auth.js"></script>
+</body>
+</html>

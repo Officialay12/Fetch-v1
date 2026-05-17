@@ -1,10 +1,32 @@
-/* ═══════════════════════════════════════════════
-   FETCH — server.js  (Backend Scraper API)
-   by ayocodes  |  v1.0 — Production Ready
-═══════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════════════════
+   FETCH — server.js v2.0.0
+   by ayocodes
+
+   does it work? yeah probably.
+   three-tier bypass, auth, deobfuscator, admin panel.
+   mongodb, jwt, google oauth, groq ai.
+
+   if it breaks, it's not my fault. (ok maybe it is)
+═══════════════════════════════════════════════════════════════════ */
 
 "use strict";
 
+require("dotenv").config();
+
+// check if we have what we need
+const REQUIRED_ENV = ["MONGODB_URI", "JWT_SECRET"];
+const missingEnv = REQUIRED_ENV.filter((k) => !process.env[k]);
+if (missingEnv.length) {
+  console.error(`[FATAL] missing: ${missingEnv.join(", ")}`);
+  process.exit(1);
+}
+
+if (!process.env.GOOGLE_CLIENT_ID) console.warn("[WARN] google auth disabled");
+if (!process.env.GROQ_API_KEY) console.warn("[WARN] deobfuscator disabled");
+
+/* ──────────────────────────────────────────────
+   imports — all the things
+────────────────────────────────────────────── */
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
@@ -13,33 +35,993 @@ const cheerio = require("cheerio");
 const rateLimit = require("express-rate-limit");
 const iconv = require("iconv-lite");
 const crypto = require("crypto");
+const UserAgent = require("user-agents");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
+const mongoose = require("mongoose");
+const path = require("path");
 
+// optional deps — might be there, might not
+let OAuth2Client, googleClient;
+try {
+  ({ OAuth2Client } = require("google-auth-library"));
+  if (process.env.GOOGLE_CLIENT_ID)
+    googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+} catch {
+  console.warn("[WARN] google-auth-library not installed");
+}
+
+let Groq, groq;
+try {
+  ({ Groq } = require("groq-sdk"));
+  if (process.env.GROQ_API_KEY)
+    groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+} catch {
+  console.warn("[WARN] groq-sdk not installed");
+}
+
+/* ──────────────────────────────────────────────
+   mongoose schemas — basic stuff
+────────────────────────────────────────────── */
+const UserSchema = new mongoose.Schema(
+  {
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+    },
+    password: { type: String, select: false },
+    name: { type: String, trim: true, maxlength: 80 },
+    googleId: { type: String, sparse: true },
+    avatar: { type: String },
+    provider: {
+      type: String,
+      enum: ["local", "google", "both"],
+      default: "local",
+    },
+    lastLogin: { type: Date },
+  },
+  { timestamps: true },
+);
+
+const FetchLogSchema = new mongoose.Schema(
+  {
+    userEmail: { type: String, required: true, index: true },
+    url: { type: String, required: true },
+    success: { type: Boolean, default: false },
+    tierUsed: { type: Number },
+    durationMs: { type: Number },
+  },
+  { timestamps: true },
+);
+
+const DeobfLogSchema = new mongoose.Schema(
+  {
+    userEmail: { type: String, required: true, index: true },
+    inputLength: { type: Number },
+    outputLength: { type: Number },
+    success: { type: Boolean, default: false },
+    model: { type: String },
+    error: { type: String },
+  },
+  { timestamps: true },
+);
+
+const User = mongoose.model("User", UserSchema);
+const FetchLog = mongoose.model("FetchLog", FetchLogSchema);
+const DeobfLog = mongoose.model("DeobfLog", DeobfLogSchema);
+
+/* ──────────────────────────────────────────────
+   mongodb connection — praying it works
+────────────────────────────────────────────── */
+mongoose
+  .connect(process.env.MONGODB_URI, {
+    serverSelectionTimeoutMS: 10_000,
+    socketTimeoutMS: 45_000,
+  })
+  .then(() => console.log("✓ mongodb connected"))
+  .catch((err) => {
+    console.error("✗ mongodb failed:", err.message);
+    process.exit(1);
+  });
+
+mongoose.connection.on("error", (e) => console.error("[MongoDB]", e.message));
+mongoose.connection.on("disconnected", () =>
+  console.warn("[MongoDB] disconnected — reconnecting…"),
+);
+
+/* ──────────────────────────────────────────────
+   constants — nothing fancy
+────────────────────────────────────────────── */
+const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_EXPIRY = "30d";
+const API_SECRET =
+  process.env.API_SECRET || crypto.randomBytes(32).toString("hex");
+
+// admin creds — hash > plain, but both work
+const ADMIN_USERNAME = (process.env.ADMIN_USERNAME || "ayocodes").toLowerCase();
+const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH || null;
+const ADMIN_PLAIN_PASSWORD = process.env.ADMIN_PLAIN_PASSWORD || null;
+
+if (!ADMIN_PASSWORD_HASH && !ADMIN_PLAIN_PASSWORD) {
+  console.warn("[WARN] no admin password set");
+}
+
+const MAX_CODE_CHARS = 50_000;
+const MAX_AI_TOKENS = 8_000;
+
+/* ──────────────────────────────────────────────
+   scraper tiers — if they're installed
+────────────────────────────────────────────── */
+let cloudflareScraper = null;
+try {
+  cloudflareScraper = require("cloudflare-scraper");
+  console.log("✓ tier 2 ready");
+} catch {
+  console.warn("⚠ tier 2 disabled");
+}
+
+let puppeteerExtra = null;
+try {
+  puppeteerExtra = require("puppeteer-extra");
+  puppeteerExtra.use(require("puppeteer-extra-plugin-stealth")());
+  console.log("✓ tier 3 ready");
+} catch {
+  console.warn("⚠ tier 3 disabled");
+}
+
+/* ──────────────────────────────────────────────
+   express setup — let's go
+────────────────────────────────────────────── */
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = parseInt(process.env.PORT || "3001", 10);
 
-/* ══════════════════════════════════════════════
-   CONFIG
-══════════════════════════════════════════════ */
 const ALLOWED_ORIGINS = [
   "http://localhost:3000",
+  "http://localhost:3001",
   "http://localhost:5500",
   "http://127.0.0.1:5500",
   "http://localhost:8080",
   "http://127.0.0.1:8080",
   "http://localhost:5173",
   "https://fetch-liart-gamma.vercel.app",
-  "https://fetch-v1.onrender.com",
   process.env.FRONTEND_URL,
 ].filter(Boolean);
+
+app.use(
+  cors({
+    origin: (origin, cb) => {
+      if (!origin) return cb(null, true);
+      if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+      if (/\.onrender\.com$/.test(origin) || /\.vercel\.app$/.test(origin))
+        return cb(null, true);
+      return cb(new Error(`CORS: ${origin} not allowed`));
+    },
+    methods: ["GET", "POST", "PATCH", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
+  }),
+);
+
+app.use(
+  helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }),
+);
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: false, limit: "10mb" }));
+app.set("trust proxy", 1);
+
+/* ══════════════════════════════════════════════
+   STATIC FILES — FINALLY
+   (so you don't have to open html files directly)
+══════════════════════════════════════════════ */
+
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "frontend", "index.html"));
+});
+
+app.get("/auth.html", (req, res) => {
+  res.sendFile(path.join(__dirname, "frontend", "auth.html"));
+});
+
+app.get("/admin.html", (req, res) => {
+  res.sendFile(path.join(__dirname, "frontend", "admin.html"));
+});
+
+app.get("/index.html", (req, res) => {
+  res.sendFile(path.join(__dirname, "frontend", "index.html"));
+});
+
+// Also update the static middleware:
+app.use(express.static(path.join(__dirname, "frontend")));
+
+/* ──────────────────────────────────────────────
+   rate limiters — don't spam me
+────────────────────────────────────────────── */
+const mkLimiter = (windowMs, max, message) =>
+  rateLimit({
+    windowMs,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, error: message },
+  });
+
+const globalLimiter = mkLimiter(60_000, 120, "slow down");
+const authLimiter = mkLimiter(
+  15 * 60_000,
+  20,
+  "too many attempts, wait 15 min",
+);
+const fetchLimiter = mkLimiter(60_000, 30, "30 fetches per minute max");
+const deobfLimiter = mkLimiter(60_000, 20, "20 deobfuscations per minute max");
+const adminLimiter = mkLimiter(15 * 60_000, 15, "too many admin attempts");
+
+app.use("/api/", globalLimiter);
+
+/* ──────────────────────────────────────────────
+   helpers — utility functions
+────────────────────────────────────────────── */
+function generateToken(userId, email) {
+  return jwt.sign({ userId: String(userId), email, role: "user" }, JWT_SECRET, {
+    expiresIn: JWT_EXPIRY,
+    algorithm: "HS256",
+  });
+}
+
+function generateAdminToken(username) {
+  return jwt.sign({ role: "admin", username, userId: "admin" }, JWT_SECRET, {
+    expiresIn: "8h",
+    algorithm: "HS256",
+  });
+}
+
+function safeUser(user) {
+  return {
+    id: user._id,
+    email: user.email,
+    name: user.name || "",
+    avatar: user.avatar || null,
+    provider: user.provider || "local",
+  };
+}
+
+function validateEmail(email) {
+  return (
+    typeof email === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
+  );
+}
+
+function validatePassword(pw) {
+  return typeof pw === "string" && pw.length >= 6 && pw.length <= 128;
+}
+
+/* ──────────────────────────────────────────────
+   auth middleware — protect the good stuff
+────────────────────────────────────────────── */
+function authenticateToken(req, res, next) {
+  const auth = req.headers["authorization"];
+  if (!auth?.startsWith("Bearer ")) {
+    return res.status(401).json({ success: false, error: "no token provided" });
+  }
+  jwt.verify(
+    auth.slice(7),
+    JWT_SECRET,
+    { algorithms: ["HS256"] },
+    (err, decoded) => {
+      if (err) {
+        const msg =
+          err.name === "TokenExpiredError" ? "token expired" : "invalid token";
+        return res.status(401).json({ success: false, error: msg });
+      }
+      req.user = decoded;
+      next();
+    },
+  );
+}
+
+function requireAdmin(req, res, next) {
+  if (!req.user || req.user.role !== "admin") {
+    return res.status(403).json({ success: false, error: "admin only" });
+  }
+  next();
+}
+
+/* ══════════════════════════════════════════════
+   PUBLIC ROUTES — no auth needed
+══════════════════════════════════════════════ */
+
+app.get("/api/config", (_req, res) => {
+  res.json({
+    success: true,
+    googleClientId: process.env.GOOGLE_CLIENT_ID || null,
+    version: "2.0.1",
+    env: process.env.NODE_ENV || "development",
+  });
+});
+
+app.get("/health", (_req, res) =>
+  res.json({
+    status: "ok",
+    version: "2.0.1",
+    time: new Date().toISOString(),
+    uptime: process.uptime(),
+    db: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
+    tiers: {
+      tier1_axios: true,
+      tier2_cloudflare_scraper: !!cloudflareScraper,
+      tier3_puppeteer_stealth: !!puppeteerExtra,
+    },
+  }),
+);
+
+app.get("/api/token", (_req, res) => {
+  const ts = Date.now().toString();
+  const token = crypto
+    .createHmac("sha256", API_SECRET)
+    .update(`fetch:${ts}`)
+    .digest("hex");
+  res.json({ success: true, token, timestamp: ts });
+});
+
+app.get("/api/endpoints", (_req, res) => {
+  res.json({
+    success: true,
+    endpoints: [
+      "GET /",
+      "GET /health",
+      "GET /api/config",
+      "GET /api/token",
+      "GET /api/endpoints",
+      "POST /api/auth/register",
+      "POST /api/auth/login",
+      "POST /api/auth/google",
+      "GET /api/auth/verify",
+      "POST /api/auth/logout",
+      "GET /api/auth/profile",
+      "PATCH /api/auth/profile",
+      "POST /api/fetch",
+      "POST /api/deobfuscate",
+      "POST /api/admin/authenticate",
+      "GET /api/admin/stats",
+      "GET /api/admin/users",
+      "GET /api/admin/fetches",
+      "GET /api/admin/deobfuscations",
+    ],
+    version: "2.0.1",
+  });
+});
+
+/* ══════════════════════════════════════════════
+   AUTH ROUTES — register, login, google, profile
+══════════════════════════════════════════════ */
+
+app.post("/api/auth/register", authLimiter, async (req, res) => {
+  try {
+    const email = (req.body.email || "").trim().toLowerCase();
+    const password = req.body.password || "";
+    const name = (req.body.name || "").trim().slice(0, 80);
+
+    if (!validateEmail(email))
+      return res.status(400).json({ success: false, error: "invalid email" });
+    if (!validatePassword(password))
+      return res
+        .status(400)
+        .json({ success: false, error: "password must be 6-128 chars" });
+
+    const existing = await User.findOne({ email });
+    if (existing) {
+      if (existing.provider === "google" && !existing.password) {
+        existing.password = await bcrypt.hash(password, 12);
+        existing.provider = "both";
+        if (name && !existing.name) existing.name = name;
+        existing.lastLogin = new Date();
+        await existing.save();
+        return res.json({
+          success: true,
+          token: generateToken(existing._id, existing.email),
+          user: safeUser(existing),
+        });
+      }
+      return res
+        .status(409)
+        .json({ success: false, error: "email already exists" });
+    }
+
+    const user = await User.create({
+      email,
+      password: await bcrypt.hash(password, 12),
+      name: name || email.split("@")[0],
+      provider: "local",
+      lastLogin: new Date(),
+    });
+
+    res.status(201).json({
+      success: true,
+      token: generateToken(user._id, user.email),
+      user: safeUser(user),
+    });
+  } catch (err) {
+    console.error("[register]", err.message);
+    res.status(500).json({ success: false, error: "registration failed" });
+  }
+});
+
+app.post("/api/auth/login", authLimiter, async (req, res) => {
+  try {
+    const email = (req.body.email || "").trim().toLowerCase();
+    const password = req.body.password || "";
+
+    if (!validateEmail(email) || !password) {
+      return res
+        .status(400)
+        .json({ success: false, error: "email and password required" });
+    }
+
+    const user = await User.findOne({ email }).select("+password");
+    if (!user) {
+      await bcrypt.compare(
+        password,
+        "$2b$12$invalidhashpaddinginvalidhashpadding00",
+      );
+      return res
+        .status(401)
+        .json({ success: false, error: "invalid credentials" });
+    }
+
+    if ((user.provider === "google" && !user.password) || !user.password) {
+      return res.status(401).json({
+        success: false,
+        error: "this account uses google sign-in",
+      });
+    }
+
+    if (!(await bcrypt.compare(password, user.password))) {
+      return res
+        .status(401)
+        .json({ success: false, error: "invalid credentials" });
+    }
+
+    user.lastLogin = new Date();
+    await user.save();
+
+    res.json({
+      success: true,
+      token: generateToken(user._id, user.email),
+      user: safeUser(user),
+    });
+  } catch (err) {
+    console.error("[login]", err.message);
+    res.status(500).json({ success: false, error: "login failed" });
+  }
+});
+
+app.post("/api/auth/google", authLimiter, async (req, res) => {
+  if (!googleClient) {
+    return res
+      .status(503)
+      .json({ success: false, error: "google auth not configured" });
+  }
+
+  try {
+    const { credential, token_type, profile } = req.body;
+
+    if (
+      !credential ||
+      typeof credential !== "string" ||
+      credential.length < 20
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, error: "invalid google credential" });
+    }
+
+    let googleId, email, name, avatar;
+
+    if (token_type === "access_token" && profile) {
+      googleId = profile.sub;
+      email = (profile.email || "").toLowerCase().trim();
+      name = profile.name || "";
+      avatar = profile.picture || null;
+    } else {
+      try {
+        const ticket = await googleClient.verifyIdToken({
+          idToken: credential,
+          audience: process.env.GOOGLE_CLIENT_ID,
+        });
+        const payload = ticket.getPayload();
+        googleId = payload.sub;
+        email = (payload.email || "").toLowerCase().trim();
+        name = payload.name || "";
+        avatar = payload.picture || null;
+      } catch (verifyErr) {
+        console.warn("[google-auth] verification failed:", verifyErr.message);
+        return res
+          .status(401)
+          .json({ success: false, error: "invalid google token" });
+      }
+    }
+
+    if (!email)
+      return res
+        .status(400)
+        .json({ success: false, error: "no email from google" });
+    if (!googleId)
+      return res.status(400).json({ success: false, error: "no google id" });
+
+    let user = await User.findOne({ $or: [{ googleId }, { email }] });
+
+    if (user) {
+      let changed = false;
+      if (!user.googleId) {
+        user.googleId = googleId;
+        user.provider = user.password ? "both" : "google";
+        changed = true;
+      }
+      if (!user.avatar && avatar) {
+        user.avatar = avatar;
+        changed = true;
+      }
+      if (!user.name && name) {
+        user.name = name;
+        changed = true;
+      }
+      user.lastLogin = new Date();
+      if (changed) await user.save();
+      else await User.updateOne({ _id: user._id }, { lastLogin: new Date() });
+    } else {
+      user = await User.create({
+        email,
+        name: name || email.split("@")[0],
+        googleId,
+        avatar,
+        provider: "google",
+        lastLogin: new Date(),
+      });
+      console.log(`[google-auth] new account: ${email}`);
+    }
+
+    res.json({
+      success: true,
+      token: generateToken(user._id, user.email),
+      user: safeUser(user),
+    });
+  } catch (err) {
+    console.error("[google-auth]", err.message);
+    res.status(500).json({ success: false, error: "google auth failed" });
+  }
+});
+
+app.get("/api/auth/verify", authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role === "admin") {
+      return res.json({
+        success: true,
+        user: {
+          id: "admin",
+          email: `${req.user.username}@admin`,
+          name: req.user.username,
+          role: "admin",
+        },
+      });
+    }
+    const user = await User.findById(req.user.userId);
+    if (!user)
+      return res.status(404).json({ success: false, error: "user not found" });
+    res.json({ success: true, user: safeUser(user) });
+  } catch (err) {
+    console.error("[verify]", err.message);
+    res.status(500).json({ success: false, error: "verification failed" });
+  }
+});
+
+app.post("/api/auth/logout", authenticateToken, (_req, res) => {
+  res.json({ success: true, message: "logged out" });
+});
+
+app.get("/api/auth/profile", authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role === "admin") {
+      return res.json({
+        success: true,
+        user: {
+          id: "admin",
+          email: `${req.user.username}@admin`,
+          name: req.user.username,
+          role: "admin",
+          provider: "local",
+          avatar: null,
+          stats: { fetches: 0, deobfuscations: 0 },
+        },
+      });
+    }
+
+    const user = await User.findById(req.user.userId).lean();
+    if (!user)
+      return res.status(404).json({ success: false, error: "user not found" });
+
+    const [fetchCount, deobfCount] = await Promise.all([
+      FetchLog.countDocuments({ userEmail: user.email }),
+      DeobfLog.countDocuments({ userEmail: user.email }),
+    ]);
+
+    res.json({
+      success: true,
+      user: {
+        id: user._id,
+        email: user.email,
+        name: user.name || "",
+        avatar: user.avatar || null,
+        provider: user.provider || "local",
+        createdAt: user.createdAt,
+        lastLogin: user.lastLogin,
+        stats: { fetches: fetchCount, deobfuscations: deobfCount },
+      },
+    });
+  } catch (err) {
+    console.error("[profile]", err.message);
+    res.status(500).json({ success: false, error: "could not load profile" });
+  }
+});
+
+app.patch("/api/auth/profile", authenticateToken, async (req, res) => {
+  try {
+    if (req.user.role === "admin") {
+      return res
+        .status(403)
+        .json({ success: false, error: "admin profile is read-only" });
+    }
+    const name = (req.body.name || "").trim().slice(0, 80);
+    if (!name)
+      return res
+        .status(400)
+        .json({ success: false, error: "name cannot be empty" });
+
+    const user = await User.findByIdAndUpdate(
+      req.user.userId,
+      { name },
+      { new: true },
+    ).lean();
+    if (!user)
+      return res.status(404).json({ success: false, error: "user not found" });
+    res.json({ success: true, user: { name: user.name, email: user.email } });
+  } catch (err) {
+    console.error("[profile-update]", err.message);
+    res.status(500).json({ success: false, error: "update failed" });
+  }
+});
+
+/* ══════════════════════════════════════════════
+   ADMIN AUTH — hash or plain, both work
+══════════════════════════════════════════════ */
+app.post("/api/admin/authenticate", adminLimiter, async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    if (!username || !password) {
+      return res
+        .status(400)
+        .json({ success: false, error: "username and password required" });
+    }
+
+    const normalized = username.includes("@")
+      ? username.split("@")[0].toLowerCase()
+      : username.toLowerCase();
+
+    if (normalized !== ADMIN_USERNAME) {
+      await bcrypt.compare(
+        password,
+        "$2b$10$invalidsafetyhashpadding0000000000000",
+      );
+      return res
+        .status(401)
+        .json({ success: false, error: "invalid credentials" });
+    }
+
+    let isValid = false;
+    if (ADMIN_PASSWORD_HASH) {
+      isValid = await bcrypt.compare(password, ADMIN_PASSWORD_HASH);
+    } else if (ADMIN_PLAIN_PASSWORD) {
+      isValid = password === ADMIN_PLAIN_PASSWORD;
+      if (isValid)
+        console.warn(
+          "[ADMIN] using plain-text password — set ADMIN_PASSWORD_HASH for prod",
+        );
+    } else {
+      console.error("[ADMIN] no admin password configured");
+      return res
+        .status(503)
+        .json({ success: false, error: "admin auth not configured" });
+    }
+
+    if (!isValid)
+      return res
+        .status(401)
+        .json({ success: false, error: "invalid credentials" });
+
+    console.log(`[ADMIN] ✓ ${normalized}`);
+    res.json({ success: true, token: generateAdminToken(normalized) });
+  } catch (err) {
+    console.error("[admin-auth]", err.message);
+    res.status(500).json({ success: false, error: "authentication failed" });
+  }
+});
+
+/* ══════════════════════════════════════════════
+   ADMIN DATA ROUTES — stats, users, fetches, deobf
+══════════════════════════════════════════════ */
+app.get(
+  "/api/admin/stats",
+  authenticateToken,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const ago30 = new Date(Date.now() - 30 * 86_400_000);
+
+      const [
+        totalUsers,
+        googleUsers,
+        active30,
+        newToday,
+        recentUsers,
+        providerLocal,
+        providerGoogle,
+        providerBoth,
+        totalFetches,
+        successFetches,
+        totalDeobf,
+        successDeobf,
+        avgDurResult,
+        uniqueDeobfEmails,
+      ] = await Promise.all([
+        User.countDocuments(),
+        User.countDocuments({ provider: { $in: ["google", "both"] } }),
+        User.countDocuments({ lastLogin: { $gte: ago30 } }),
+        User.countDocuments({ createdAt: { $gte: todayStart } }),
+        User.find().sort({ createdAt: -1 }).limit(10).lean(),
+        User.countDocuments({ provider: "local" }),
+        User.countDocuments({ provider: "google" }),
+        User.countDocuments({ provider: "both" }),
+        FetchLog.countDocuments(),
+        FetchLog.countDocuments({ success: true }),
+        DeobfLog.countDocuments(),
+        DeobfLog.countDocuments({ success: true }),
+        FetchLog.aggregate([
+          { $group: { _id: null, avg: { $avg: "$durationMs" } } },
+        ]),
+        DeobfLog.distinct("userEmail"),
+      ]);
+
+      const fetchesByDay = [];
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        d.setHours(0, 0, 0, 0);
+        const nd = new Date(d);
+        nd.setDate(nd.getDate() + 1);
+        const count = await FetchLog.countDocuments({
+          createdAt: { $gte: d, $lt: nd },
+        });
+        fetchesByDay.push({
+          label: d.toLocaleDateString("en-US", { weekday: "short" }),
+          count,
+        });
+      }
+
+      res.json({
+        success: true,
+        totalUsers,
+        googleUsers,
+        active30,
+        newToday,
+        recentUsers,
+        providerCounts: {
+          local: providerLocal,
+          google: providerGoogle,
+          both: providerBoth,
+        },
+        totalFetches,
+        failedFetches: totalFetches - successFetches,
+        totalDeobf,
+        failedDeobf: totalDeobf - successDeobf,
+        uniqueDeobfUsers: uniqueDeobfEmails.length,
+        avgFetchMs: Math.round(avgDurResult[0]?.avg || 0),
+        fetchesByDay,
+      });
+    } catch (err) {
+      console.error("[admin-stats]", err.message);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+);
+
+app.get(
+  "/api/admin/users",
+  authenticateToken,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const users = await User.find().sort({ createdAt: -1 }).lean();
+      res.json({ success: true, users });
+    } catch (err) {
+      console.error("[admin-users]", err.message);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+);
+
+app.get(
+  "/api/admin/fetches",
+  authenticateToken,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const [fetches, total, success, avgResult] = await Promise.all([
+        FetchLog.find().sort({ createdAt: -1 }).limit(200).lean(),
+        FetchLog.countDocuments(),
+        FetchLog.countDocuments({ success: true }),
+        FetchLog.aggregate([
+          { $group: { _id: null, avg: { $avg: "$durationMs" } } },
+        ]),
+      ]);
+      res.json({
+        success: true,
+        fetches,
+        stats: {
+          total,
+          success,
+          failed: total - success,
+          avgDuration: Math.round(avgResult[0]?.avg || 0),
+        },
+      });
+    } catch (err) {
+      console.error("[admin-fetches]", err.message);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+);
+
+app.get(
+  "/api/admin/deobfuscations",
+  authenticateToken,
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const [deobfuscations, total, success, uniqueArr] = await Promise.all([
+        DeobfLog.find().sort({ createdAt: -1 }).limit(200).lean(),
+        DeobfLog.countDocuments(),
+        DeobfLog.countDocuments({ success: true }),
+        DeobfLog.distinct("userEmail"),
+      ]);
+      res.json({
+        success: true,
+        deobfuscations,
+        stats: {
+          total,
+          success,
+          failed: total - success,
+          uniqueUsers: uniqueArr.length,
+        },
+      });
+    } catch (err) {
+      console.error("[admin-deobf]", err.message);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  },
+);
+
+/* ══════════════════════════════════════════════
+   DEOBFUSCATOR — groq ai does the work
+══════════════════════════════════════════════ */
+app.post(
+  "/api/deobfuscate",
+  authenticateToken,
+  deobfLimiter,
+  async (req, res) => {
+    if (!groq) {
+      return res
+        .status(503)
+        .json({ success: false, error: "deobfuscator not configured" });
+    }
+
+    const userEmail = req.user.email;
+    const jsCode = req.body.jsCode || "";
+    const inputLength = jsCode.length;
+    const model = "llama-3.3-70b-versatile";
+
+    const logFail = async (error) => {
+      await DeobfLog.create({
+        userEmail,
+        inputLength,
+        success: false,
+        model,
+        error,
+      }).catch(() => {});
+    };
+
+    if (!jsCode || typeof jsCode !== "string") {
+      return res
+        .status(400)
+        .json({ success: false, error: "no code provided" });
+    }
+    if (jsCode.trim().length < 20) {
+      await logFail("code too short");
+      return res
+        .status(400)
+        .json({ success: false, error: "code too short (min 20 chars)" });
+    }
+    if (jsCode.length > MAX_CODE_CHARS) {
+      await logFail(`code too large: ${jsCode.length}`);
+      return res.status(413).json({
+        success: false,
+        error: `code too large (max ${MAX_CODE_CHARS.toLocaleString()} chars)`,
+      });
+    }
+
+    try {
+      console.log(`[DEOBF] ${inputLength} chars — ${userEmail}`);
+
+      const prompt = `deobfuscate this javascript. rename variables, unpack strings, add comments. keep the logic exactly the same. return only the deobfuscated code with "@fetch by ayocodes" at top and bottom. no markdown.
+
+code:
+${jsCode}`;
+
+      const completion = await groq.chat.completions.create({
+        model,
+        temperature: 0.2,
+        max_tokens: MAX_AI_TOKENS,
+        messages: [{ role: "user", content: prompt }],
+      });
+
+      let deobfuscated = (completion.choices[0]?.message?.content || "").trim();
+      deobfuscated = deobfuscated
+        .replace(/^```(?:javascript|js)?\s*/im, "")
+        .replace(/\s*```$/m, "")
+        .trim();
+
+      await DeobfLog.create({
+        userEmail,
+        inputLength,
+        outputLength: deobfuscated.length,
+        success: true,
+        model,
+      }).catch(() => {});
+      console.log(
+        `[DEOBF OK] ${userEmail} — output ${deobfuscated.length} chars`,
+      );
+
+      res.json({ success: true, deobfuscated });
+    } catch (err) {
+      console.error("[DEOBF ERROR]", err.message);
+      await logFail(err.message);
+
+      if (err.status === 429 || err.message?.includes("rate_limit")) {
+        return res
+          .status(429)
+          .json({ success: false, error: "rate limit reached, wait a bit" });
+      }
+      if (err.status === 413 || err.message?.includes("token")) {
+        return res
+          .status(413)
+          .json({ success: false, error: "code too large for ai" });
+      }
+      res.status(500).json({ success: false, error: "deobfuscation failed" });
+    }
+  },
+);
+
+/* ══════════════════════════════════════════════
+   SCRAPING HELPERS — the messy part
+══════════════════════════════════════════════ */
+const PRIVATE_IP_RE =
+  /^(localhost|127\.|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.|0\.0\.0\.0|::1|fd[0-9a-f]{2}:)/i;
 
 const BLOCKED_DOMAINS = [
   "fetch-liart-gamma.vercel.app",
   "fetch-v1.onrender.com",
-  process.env.FRONTEND_DOMAIN,
-  "localhost",
-  "127.0.0.1",
-  "0.0.0.0",
-  "::1",
+  process.env.BLOCKED_DOMAIN,
 ]
   .filter(Boolean)
   .map((d) =>
@@ -49,187 +1031,32 @@ const BLOCKED_DOMAINS = [
       .replace(/\/$/, ""),
   );
 
-const API_SECRET =
-  process.env.API_SECRET || crypto.randomBytes(32).toString("hex");
-const PRIVATE_IP_REGEX =
-  /^(localhost|127\.|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.|0\.0\.0\.0|::1|fd[0-9a-f]{2}:)/i;
-
-// Rotating user agents to avoid detection
-const USER_AGENTS = [
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:121.0) Gecko/20100101 Firefox/121.0",
-  "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0",
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
-  "Mozilla/5.0 (iPhone; CPU iPhone OS 17_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Mobile/15E148 Safari/604.1",
-];
-
-/* ══════════════════════════════════════════════
-   MIDDLEWARE
-══════════════════════════════════════════════ */
-app.set("trust proxy", 1);
-app.use(
-  helmet({
-    contentSecurityPolicy: false,
-    crossOriginEmbedderPolicy: false,
-  }),
-);
-app.use(express.json({ limit: "50mb" }));
-
-// CORS configuration - allow all for maximum compatibility
-app.use(
-  cors({
-    origin: true,
-    methods: ["GET", "POST", "OPTIONS"],
-    credentials: true,
-  }),
-);
-
-/* ── RATE LIMITS ── */
-const globalLimiter = rateLimit({
-  windowMs: 60_000,
-  max: 120,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: "Too many requests — please wait a moment." },
-});
-
-const fetchLimiter = rateLimit({
-  windowMs: 60_000,
-  max: 30,
-  message: { error: "Fetch limit reached (30/min). Please wait." },
-});
-
-app.use("/api/", globalLimiter);
-app.use("/api/fetch", fetchLimiter);
-
-/* ══════════════════════════════════════════════
-   ROOT ENDPOINT - FIXES THE 404 ERROR
-══════════════════════════════════════════════ */
-app.get("/", (req, res) => {
-  res.json({
-    success: true,
-    service: "FETCH API by ayocodes",
-    version: "1.0.0",
-    status: "online",
-    message: "Welcome to FETCH API - Web Scraper Backend",
-    endpoints: {
-      health: "/health",
-      token: "/api/token",
-      fetch: "/api/fetch (POST)",
-    },
-    documentation:
-      "Send POST requests to /api/fetch with { url: 'https://example.com' }",
-    time: new Date().toISOString(),
-  });
-});
-
-/* ══════════════════════════════════════════════
-   HEALTH CHECK ENDPOINT
-══════════════════════════════════════════════ */
-app.get("/health", (_, res) => {
-  res.json({
-    status: "ok",
-    service: "FETCH API by ayocodes",
-    version: "1.0.0",
-    time: new Date().toISOString(),
-    uptime: process.uptime(),
-    endpoints: ["/", "/health", "/api/token", "/api/fetch"],
-  });
-});
-
-/* ══════════════════════════════════════════════
-   TOKEN AUTH FUNCTIONS
-══════════════════════════════════════════════ */
-function generateToken(timestamp) {
-  return crypto
-    .createHmac("sha256", API_SECRET)
-    .update(`fetch:${timestamp}`)
-    .digest("hex");
-}
-
-function validateToken(token, timestamp) {
-  if (!token || !timestamp) return false;
-  const ts = parseInt(timestamp, 10);
-  const now = Date.now();
-  if (isNaN(ts) || Math.abs(now - ts) > 300000) return false; // 5 minutes
-  const expected = generateToken(ts.toString());
+function getRandomUA() {
   try {
-    return crypto.timingSafeEqual(
-      Buffer.from(token.padEnd(64, "0")),
-      Buffer.from(expected.padEnd(64, "0")),
-    );
+    return new UserAgent({ deviceCategory: "desktop" }).toString();
   } catch {
-    return false;
+    return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36";
   }
 }
 
-/* ══════════════════════════════════════════════
-   TOKEN ENDPOINT
-══════════════════════════════════════════════ */
-app.get("/api/token", (req, res) => {
-  try {
-    const timestamp = Date.now().toString();
-    const token = generateToken(timestamp);
-    res.json({
-      success: true,
-      token,
-      timestamp,
-    });
-  } catch (error) {
-    console.error("Token generation error:", error);
-    res.status(500).json({
-      success: false,
-      error: "Failed to generate token",
-    });
-  }
-});
-
-/* ══════════════════════════════════════════════
-   HELPER FUNCTIONS
-══════════════════════════════════════════════ */
-
-/** Get random user agent to avoid detection */
-function getRandomUserAgent() {
-  return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
-}
-
-/** Get random browser headers */
-function getRandomHeaders() {
+function browserHeaders(ua) {
   return {
-    "User-Agent": getRandomUserAgent(),
-    Accept:
-      "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-    "Accept-Language": "en-US,en;q=0.9,es;q=0.8",
+    "User-Agent": ua || getRandomUA(),
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
     "Accept-Encoding": "gzip, deflate, br",
     "Cache-Control": "no-cache",
-    Pragma: "no-cache",
-    "Sec-Ch-Ua":
-      '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+    "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124"',
     "Sec-Ch-Ua-Mobile": "?0",
     "Sec-Ch-Ua-Platform": '"Windows"',
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1",
     "Upgrade-Insecure-Requests": "1",
-    Connection: "keep-alive",
   };
 }
 
-/** Resolve a relative URL safely */
 function resolveURL(base, relative) {
   if (!relative || typeof relative !== "string") return null;
   relative = relative.trim();
-  if (
-    !relative ||
-    relative.startsWith("data:") ||
-    relative.startsWith("javascript:")
-  ) {
-    return null;
-  }
+  if (!relative || /^(data:|javascript:|blob:)/i.test(relative)) return null;
   try {
     return new URL(relative, base).href;
   } catch {
@@ -237,346 +1064,284 @@ function resolveURL(base, relative) {
   }
 }
 
-/** Advanced fetch with retry and bypass techniques */
-async function advancedFetch(url, timeout = 20000, retries = 3) {
-  let lastError;
-
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      console.log(`[FETCH ATTEMPT ${attempt}] ${url}`);
-
-      const headers = getRandomHeaders();
-
-      const config = {
-        timeout,
-        responseType: "arraybuffer",
-        maxRedirects: 8,
-        maxContentLength: 50 * 1024 * 1024,
-        headers,
-        validateStatus: (s) => s < 500,
-        decompress: true,
-      };
-
-      const res = await axios.get(url, config);
-
-      if (res.status >= 400) {
-        const err = new Error(`HTTP ${res.status}`);
-        err.response = res;
-        throw err;
-      }
-
-      // Detect charset
-      const ct = res.headers["content-type"] || "";
-      let charset = "utf-8";
-      const m = ct.match(/charset=([^\s;]+)/i);
-      if (m) charset = m[1].replace(/['"]/g, "");
-
-      const buf = Buffer.from(res.data);
-
-      // Try to detect charset from HTML meta tags
-      const sniffed = buf.toString("latin1").slice(0, 5000);
-      const metaM = sniffed.match(/<meta[^>]+charset=["']?([^"'\s;>]+)/i);
-      if (metaM && metaM[1] && !charset.toLowerCase().startsWith("utf")) {
-        charset = metaM[1];
-      }
-
-      try {
-        return {
-          html: iconv.decode(buf, charset),
-          headers: res.headers,
-          status: res.status,
-        };
-      } catch {
-        return {
-          html: buf.toString("utf-8"),
-          headers: res.headers,
-          status: res.status,
-        };
-      }
-    } catch (error) {
-      lastError = error;
-      console.log(`[ATTEMPT ${attempt} FAILED]`, error.message);
-
-      if (attempt < retries) {
-        const delay = attempt * 2000;
-        console.log(`Waiting ${delay}ms before retry...`);
-        await new Promise((r) => setTimeout(r, delay));
-      }
-    }
+function decodeBuffer(buf, contentType = "") {
+  let charset = "utf-8";
+  const ctMatch = contentType.match(/charset=([^\s;]+)/i);
+  if (ctMatch) charset = ctMatch[1].replace(/['"]/g, "");
+  const sniff = buf.toString("latin1").slice(0, 5000);
+  const metaM = sniff.match(/<meta[^>]+charset=["']?([^"'\s;>]+)/i);
+  if (metaM?.[1] && !charset.toLowerCase().startsWith("utf"))
+    charset = metaM[1];
+  try {
+    return iconv.decode(buf, charset);
+  } catch {
+    return buf.toString("utf-8");
   }
-
-  throw lastError;
 }
 
-/** Fetch a text asset (CSS/JS) with retry logic */
-async function fetchAsset(url, timeout = 10000, retries = 2) {
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      const headers = getRandomHeaders();
+function detectFramework(html, scriptSrcs) {
+  const s = (html + " " + scriptSrcs.join(" ")).toLowerCase();
+  if (s.includes("__next_data__") || s.includes("/_next/")) return "Next.js";
+  if (s.includes("__nuxt__") || s.includes("/_nuxt/")) return "Nuxt.js";
+  if (s.includes("__remixcontext") || s.includes("@remix-run")) return "Remix";
+  if (s.includes("gatsby-") || s.includes("___gatsby")) return "Gatsby";
+  if (s.includes("__vue__") || s.includes("createapp")) return "Vue.js";
+  if (s.includes("ng-version") || s.includes("angular")) return "Angular";
+  if (s.includes("react") || s.includes("reactdom")) return "React";
+  if (s.includes("wp-content") || s.includes("wp-includes")) return "WordPress";
+  return "Vanilla";
+}
 
-      const config = {
-        timeout,
-        responseType: "arraybuffer",
-        headers,
-        validateStatus: (s) => s < 500,
-      };
-
-      const res = await axios.get(url, config);
-
-      if (res.status >= 400) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-
-      const ct = res.headers["content-type"] || "";
-      let charset = "utf-8";
-      const m = ct.match(/charset=([^\s;]+)/i);
-      if (m) charset = m[1].replace(/['"]/g, "");
-
-      const buf = Buffer.from(res.data);
-
-      try {
-        return iconv.decode(buf, charset);
-      } catch {
-        return buf.toString("utf-8");
-      }
-    } catch (error) {
-      if (attempt === retries) {
-        return `/* ── [FETCH ERROR: ${error.message}] ── */`;
-      }
-      await new Promise((r) => setTimeout(r, attempt * 1000));
-    }
+async function fetchTier1(url, timeout = 20_000) {
+  const res = await axios.get(url, {
+    timeout,
+    responseType: "arraybuffer",
+    maxRedirects: 8,
+    maxContentLength: 15 * 1024 * 1024,
+    headers: browserHeaders(),
+    validateStatus: (s) => s < 500,
+    decompress: true,
+  });
+  if (res.status >= 400) {
+    const err = new Error(`HTTP ${res.status}`);
+    err.httpStatus = res.status;
+    throw err;
   }
-  return `/* ── [FETCH FAILED] ── */`;
-}
-
-/** Extract inline scripts and styles */
-function extractInlineCode($) {
-  const inlineScripts = [];
-  const inlineStyles = [];
-
-  $("script:not([src])").each((_, el) => {
-    const content = $(el).html();
-    if (content && content.trim().length > 20) {
-      inlineScripts.push(content.trim());
-    }
-  });
-
-  $("style").each((_, el) => {
-    const content = $(el).html();
-    if (content && content.trim().length > 5) {
-      inlineStyles.push(content.trim());
-    }
-  });
-
-  return { inlineScripts, inlineStyles };
-}
-
-/** Extract all resources from HTML */
-function extractResources($, baseUrl) {
-  const resources = {
-    scripts: [],
-    stylesheets: [],
-    images: [],
-    fonts: [],
-    meta: [],
+  return {
+    html: decodeBuffer(
+      Buffer.from(res.data),
+      res.headers["content-type"] || "",
+    ),
+    status: res.status,
+    tier: 1,
   };
+}
 
-  // Scripts
+async function fetchTier2(url, timeout = 25_000) {
+  if (!cloudflareScraper) throw new Error("cloudflare-scraper unavailable");
+  const fn =
+    typeof cloudflareScraper === "function"
+      ? cloudflareScraper
+      : (u, o, cb) => cloudflareScraper.get(u, o, cb);
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error("Tier 2 timeout")),
+      timeout,
+    );
+    fn(url, { headers: browserHeaders() }, (err, response, body) => {
+      clearTimeout(timer);
+      if (err || !body) return reject(err || new Error("Empty T2 body"));
+      const html =
+        typeof body === "string"
+          ? body
+          : decodeBuffer(Buffer.isBuffer(body) ? body : Buffer.from(body));
+      resolve({ html, status: response?.statusCode || 200, tier: 2 });
+    });
+  });
+}
+
+async function fetchTier3(url, timeout = 40_000) {
+  if (!puppeteerExtra) throw new Error("puppeteer-extra unavailable");
+  let browser;
+  try {
+    browser = await puppeteerExtra.launch({
+      headless: "new",
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+      ],
+      defaultViewport: { width: 1920, height: 1080 },
+    });
+    const page = await browser.newPage();
+    await page.setUserAgent(getRandomUA());
+    await page.setExtraHTTPHeaders(browserHeaders());
+    await page.setRequestInterception(true);
+    page.on("request", (r) =>
+      ["font", "media", "image"].includes(r.resourceType())
+        ? r.abort()
+        : r.continue(),
+    );
+    const resp = await page.goto(url, { waitUntil: "networkidle2", timeout });
+    const status = resp?.status() ?? 200;
+    await new Promise((r) => setTimeout(r, 1500));
+    const html = await page.content();
+    if (!html) throw new Error("Puppeteer: empty page");
+    return { html, status, tier: 3 };
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+}
+
+async function advancedFetch(url) {
+  const errors = [];
+
+  for (let i = 1; i <= 3; i++) {
+    try {
+      return await fetchTier1(url, 20_000);
+    } catch (err) {
+      errors.push(`T1[${i}]: ${err.message}`);
+      if ([403, 404, 451].includes(err.httpStatus)) break;
+      if (i < 3) await new Promise((r) => setTimeout(r, i * 1500));
+    }
+  }
+
+  try {
+    return await fetchTier2(url, 25_000);
+  } catch (err) {
+    errors.push(`T2: ${err.message}`);
+  }
+
+  try {
+    return await fetchTier3(url, 40_000);
+  } catch (err) {
+    errors.push(`T3: ${err.message}`);
+  }
+
+  throw new Error("all tiers failed: " + errors.join(" | "));
+}
+
+async function fetchAsset(assetUrl, timeout = 10_000, retries = 2) {
+  for (let i = 1; i <= retries; i++) {
+    try {
+      const res = await axios.get(assetUrl, {
+        timeout,
+        responseType: "arraybuffer",
+        maxContentLength: 5 * 1024 * 1024,
+        headers: browserHeaders(),
+        validateStatus: (s) => s < 500,
+      });
+      if (res.status >= 400) throw new Error(`HTTP ${res.status}`);
+      return decodeBuffer(
+        Buffer.from(res.data),
+        res.headers["content-type"] || "",
+      );
+    } catch (err) {
+      if (i === retries) return `/* [ASSET ERROR: ${err.message}] */`;
+      await new Promise((r) => setTimeout(r, i * 800));
+    }
+  }
+  return "/* [ASSET FETCH FAILED] */";
+}
+
+function extractResources($, baseUrl) {
+  const scripts = [],
+    stylesheets = [],
+    images = [],
+    meta = [];
+
   $("script[src]").each((_, el) => {
-    const src = $(el).attr("src");
-    if (src) {
-      const abs = resolveURL(baseUrl, src);
-      if (abs) resources.scripts.push(abs);
-    }
+    const u = resolveURL(baseUrl, $(el).attr("src"));
+    if (u) scripts.push(u);
   });
-
-  // Stylesheets
-  $('link[rel="stylesheet"]').each((_, el) => {
-    const href = $(el).attr("href");
-    if (href) {
-      const abs = resolveURL(baseUrl, href);
-      if (abs) resources.stylesheets.push(abs);
-    }
+  $('link[rel="stylesheet"], link[type="text/css"]').each((_, el) => {
+    const u = resolveURL(baseUrl, $(el).attr("href"));
+    if (u) stylesheets.push(u);
   });
-
-  // Images
   $("img").each((_, el) => {
     const src =
       $(el).attr("src") ||
       $(el).attr("data-src") ||
       $(el).attr("data-lazy-src");
-    if (src) {
-      const abs = resolveURL(baseUrl, src);
-      if (abs) {
-        resources.images.push(abs);
-      }
-    }
+    const u = resolveURL(baseUrl, src);
+    if (u) images.push(u);
   });
-
-  // Meta tags
-  $("title").each((_, el) => {
-    resources.meta.push({ name: "title", content: $(el).text().trim() });
-  });
-
+  $("title").each((_, el) =>
+    meta.push({ name: "title", content: $(el).text().trim() }),
+  );
   $("meta").each((_, el) => {
     const name =
       $(el).attr("name") || $(el).attr("property") || $(el).attr("http-equiv");
     const content = $(el).attr("content") || $(el).attr("charset");
-    if (name && content) {
-      resources.meta.push({ name, content });
-    }
+    if (name && content) meta.push({ name, content });
   });
 
-  return resources;
-}
-
-/** Detect JS framework */
-function detectFramework(html, scripts) {
-  const combined = html + " " + scripts.join(" ");
-
-  if (combined.includes("__NEXT_DATA__") || combined.includes("/_next/"))
-    return "Next.js";
-  if (combined.includes("__NUXT__") || combined.includes("/_nuxt/"))
-    return "Nuxt.js";
-  if (combined.includes("__remixContext") || combined.includes("@remix-run"))
-    return "Remix";
-  if (combined.includes("gatsby-") || combined.includes("___gatsby"))
-    return "Gatsby";
-  if (
-    combined.includes("react") ||
-    combined.includes("ReactDOM") ||
-    combined.includes("useState")
-  )
-    return "React";
-  if (
-    combined.includes("vue") ||
-    combined.includes("__VUE__") ||
-    combined.includes("createApp")
-  )
-    return "Vue.js";
-  if (combined.includes("angular") || combined.includes("ng-version"))
-    return "Angular";
-  if (combined.includes("svelte") || combined.includes("__SVELTE__"))
-    return "Svelte";
-  if (combined.includes("astro") || combined.includes("__ASTRO__"))
-    return "Astro";
-  if (combined.includes("jquery") || combined.includes("$.")) return "jQuery";
-  if (combined.includes("tailwind") || combined.includes("@tailwind"))
-    return "Tailwind CSS";
-  if (combined.includes("bootstrap") || combined.includes("data-bs-"))
-    return "Bootstrap";
-  if (combined.includes("wp-content") || combined.includes("wp-includes"))
-    return "WordPress";
-  if (combined.includes("shopify") || combined.includes("cdn.shopify"))
-    return "Shopify";
-
-  return "Vanilla HTML/CSS/JS";
+  return { scripts, stylesheets, images, meta };
 }
 
 /* ══════════════════════════════════════════════
-   POST /api/fetch  — main scrape endpoint
+   POST /api/fetch — the main thing
 ══════════════════════════════════════════════ */
-app.post("/api/fetch", async (req, res) => {
-  const startTime = Date.now();
-  const { token, timestamp, includeAssets = true } = req.body;
+app.post("/api/fetch", authenticateToken, fetchLimiter, async (req, res) => {
+  const t0 = Date.now();
   let { url } = req.body;
+  const userEmail = req.user.email;
 
-  console.log(`[FETCH REQUEST] ${url}`);
-
-  /* ── URL validation ── */
   if (!url || typeof url !== "string") {
-    return res.status(400).json({
-      success: false,
-      error: "Missing or invalid URL.",
-    });
+    return res.status(400).json({ success: false, error: "missing url" });
   }
 
   url = url.trim();
   if (!/^https?:\/\//i.test(url)) url = "https://" + url;
+  if (url.length > 2048)
+    return res.status(400).json({ success: false, error: "url too long" });
 
-  let parsedURL;
+  let parsed;
   try {
-    parsedURL = new URL(url);
+    parsed = new URL(url);
   } catch {
-    return res.status(400).json({
-      success: false,
-      error: "Cannot parse URL. Please include https://",
-    });
+    return res.status(400).json({ success: false, error: "invalid url" });
   }
 
-  const hostname = parsedURL.hostname.toLowerCase();
+  const hostname = parsed.hostname.toLowerCase();
 
-  /* ── Block private / local addresses ── */
-  if (PRIVATE_IP_REGEX.test(hostname)) {
-    return res.status(403).json({
-      success: false,
-      error: "Fetching private or local addresses is not allowed.",
-    });
+  if (PRIVATE_IP_RE.test(hostname)) {
+    return res.status(403).json({ success: false, error: "no private ips" });
   }
-
-  /* ── Block own domains ── */
   if (
     BLOCKED_DOMAINS.some((d) => hostname === d || hostname.endsWith("." + d))
   ) {
-    return res.status(403).json({
-      success: false,
-      error: "🔒 This domain is protected and cannot be scraped by FETCH.",
-    });
+    return res.status(403).json({ success: false, error: "domain blocked" });
   }
 
-  /* ══════════════════════════════════════
-     SCRAPE PIPELINE
-  ══════════════════════════════════════ */
-  try {
-    /* 1. Fetch main HTML page with bypass */
-    const result = await advancedFetch(url, 20000, 3);
-    const rawHTML = result.html;
+  console.log(`[FETCH] ${url} — ${userEmail}`);
 
+  try {
+    const { html: rawHTML, tier: tierUsed } = await advancedFetch(url);
     const $ = cheerio.load(rawHTML, { decodeEntities: false });
 
-    /* ── 2. Collect CSS links ── */
     const cssLinks = [];
-    $('link[rel="stylesheet"], link[type="text/css"]').each((_, el) => {
-      const href = $(el).attr("href");
-      if (href) {
-        const abs = resolveURL(url, href);
-        if (abs) cssLinks.push(abs);
-      }
-    });
-
-    /* ── 3. Inline <style> blocks ── */
-    const inlineStyles = [];
-    $("style").each((_, el) => {
-      const c = $(el).html();
-      if (c && c.trim().length > 5) inlineStyles.push(c.trim());
-    });
-
-    /* ── 4. Collect JS script src links ── */
     const scriptSrcs = [];
+    $('link[rel="stylesheet"], link[type="text/css"]').each((_, el) => {
+      const u = resolveURL(url, $(el).attr("href"));
+      if (u) cssLinks.push(u);
+    });
     $("script[src]").each((_, el) => {
-      const src = $(el).attr("src");
-      if (src) {
-        const abs = resolveURL(url, src);
-        if (abs) scriptSrcs.push(abs);
-      }
+      const u = resolveURL(url, $(el).attr("src"));
+      if (u) scriptSrcs.push(u);
     });
 
-    /* ── 5. Inline <script> blocks ── */
+    const inlineStyles = [];
     const inlineScripts = [];
+    $("style").each((_, el) => {
+      const c = $(el).html()?.trim();
+      if (c?.length > 5) inlineStyles.push(c);
+    });
     $("script:not([src])").each((_, el) => {
-      const c = $(el).html();
-      if (c && c.trim().length > 20) inlineScripts.push(c.trim());
+      const c = $(el).html()?.trim();
+      if (c?.length > 20) inlineScripts.push(c);
     });
 
-    /* ── 6. Fetch external CSS in parallel ── */
-    const cssResults = await Promise.allSettled(
-      cssLinks.slice(0, 20).map(async (u2) => {
-        const text = await fetchAsset(u2, 8000, 2);
-        return `/* SOURCE: ${u2} */\n${text}`;
-      }),
-    );
+    const [cssSettled, jsSettled] = await Promise.all([
+      Promise.allSettled(
+        cssLinks
+          .slice(0, 15)
+          .map(async (u) => `/* SOURCE: ${u} */\n${await fetchAsset(u)}`),
+      ),
+      Promise.allSettled(
+        scriptSrcs
+          .slice(0, 15)
+          .map(async (u) => `/* SOURCE: ${u} */\n${await fetchAsset(u)}`),
+      ),
+    ]);
 
-    const externalCSS = cssResults
+    const externalCSS = cssSettled
+      .filter((r) => r.status === "fulfilled")
+      .map((r) => r.value)
+      .join("\n\n");
+    const externalJS = jsSettled
       .filter((r) => r.status === "fulfilled")
       .map((r) => r.value)
       .join("\n\n");
@@ -589,20 +1354,6 @@ app.post("/api/fetch", async (req, res) => {
     ]
       .filter(Boolean)
       .join("\n\n");
-
-    /* ── 7. Fetch external JS in parallel ── */
-    const jsResults = await Promise.allSettled(
-      scriptSrcs.slice(0, 20).map(async (u2) => {
-        const text = await fetchAsset(u2, 8000, 2);
-        return `/* SOURCE: ${u2} */\n${text}`;
-      }),
-    );
-
-    const externalJS = jsResults
-      .filter((r) => r.status === "fulfilled")
-      .map((r) => r.value)
-      .join("\n\n");
-
     const combinedJS = [
       externalJS,
       inlineScripts.length
@@ -612,136 +1363,155 @@ app.post("/api/fetch", async (req, res) => {
       .filter(Boolean)
       .join("\n\n");
 
-    /* ── 8. Clean HTML ── */
     $("script:not([src])").each((_, el) =>
       $(el).html("/* extracted — see JS tab */"),
     );
     $("style").each((_, el) => $(el).html("/* extracted — see CSS tab */"));
     const cleanedHTML = $.html();
 
-    /* ── 9. Extract resources ── */
     const resources = extractResources($, url);
-
     const framework = detectFramework(rawHTML, scriptSrcs);
     const pageTitle =
       resources.meta.find((m) => m.name === "title")?.content || hostname;
 
-    // Get favicon
     let favicon = null;
     $('link[rel~="icon"]').each((_, el) => {
-      const href = $(el).attr("href");
-      if (href && !favicon) {
-        favicon = resolveURL(url, href);
-      }
+      if (!favicon) favicon = resolveURL(url, $(el).attr("href"));
     });
 
-    /* ── 10. Build assets list ── */
-    const assets = [
-      ...resources.images.map((url) => ({ type: "image", url })),
-      ...resources.stylesheets.map((url) => ({ type: "stylesheet", url })),
-      ...resources.scripts.map((url) => ({ type: "script", url })),
-    ];
-
-    // Remove duplicates
     const seen = new Set();
-    const uniqueAssets = assets.filter((a) => {
-      if (seen.has(a.url)) return false;
-      seen.add(a.url);
-      return true;
-    });
+    const assets = [
+      ...resources.images.map((u) => ({ type: "image", url: u })),
+      ...resources.stylesheets.map((u) => ({ type: "stylesheet", url: u })),
+      ...resources.scripts.map((u) => ({ type: "script", url: u })),
+    ].filter((a) => (seen.has(a.url) ? false : seen.add(a.url)));
 
+    const fetchTimeMs = Date.now() - t0;
     const stats = {
       htmlLines: cleanedHTML.split("\n").length,
       cssLines: combinedCSS ? combinedCSS.split("\n").length : 0,
       jsLines: combinedJS ? combinedJS.split("\n").length : 0,
-      cssFiles: resources.stylesheets.length,
-      jsFiles: resources.scripts.length,
+      cssFiles: cssLinks.length,
+      jsFiles: scriptSrcs.length,
       images: resources.images.length,
-      totalAssets: uniqueAssets.length,
-      fetchTimeMs: Date.now() - startTime,
+      totalAssets: assets.length,
+      fetchTimeMs,
+      tierUsed,
     };
 
-    console.log(`[FETCH SUCCESS] ${url} - ${stats.fetchTimeMs}ms`);
+    await FetchLog.create({
+      userEmail,
+      url,
+      success: true,
+      tierUsed,
+      durationMs: fetchTimeMs,
+    }).catch(() => {});
+    console.log(`[FETCH OK] ${url} — ${fetchTimeMs}ms tier${tierUsed}`);
 
-    return res.json({
+    res.json({
       success: true,
       url,
       pageTitle,
       favicon,
       framework,
+      tierUsed,
       html: cleanedHTML,
       css: combinedCSS || "/* No CSS found */",
       js: combinedJS || "/* No JS found */",
       meta: resources.meta,
-      assets: uniqueAssets.slice(0, 200),
+      assets: assets.slice(0, 200),
       stats,
     });
   } catch (err) {
     console.error("[FETCH ERROR]", err.code || "", err.message);
+    await FetchLog.create({
+      userEmail,
+      url,
+      success: false,
+      durationMs: Date.now() - t0,
+    }).catch(() => {});
 
-    let errorMessage = `Scrape failed: ${err.message}`;
-    let statusCode = 500;
+    let errorMsg = "scrape failed";
+    let httpCode = 500;
 
-    if (err.code === "ECONNREFUSED") {
-      errorMessage = "Could not connect to that site. It may be offline.";
-      statusCode = 502;
-    } else if (err.code === "ETIMEDOUT" || err.code === "ECONNABORTED") {
-      errorMessage = "Request timed out. The site took too long to respond.";
-      statusCode = 504;
-    } else if (err.code === "ENOTFOUND") {
-      errorMessage = "Domain not found. Check the URL and try again.";
-      statusCode = 502;
-    } else if (err.code === "CERT_HAS_EXPIRED") {
-      errorMessage = "SSL certificate error on target site.";
-      statusCode = 502;
-    } else if (err.response?.status === 403) {
-      errorMessage =
-        "The target site denied access (403). It may block scrapers.";
-      statusCode = 403;
-    } else if (err.response?.status === 404) {
-      errorMessage = "Page not found on that site (404).";
-      statusCode = 404;
-    } else if (err.response?.status === 429) {
-      errorMessage =
-        "The target site is rate-limiting us. Try again in a moment.";
-      statusCode = 429;
+    const c = err.code || "";
+    if (c === "ECONNREFUSED") {
+      errorMsg = "connection refused";
+      httpCode = 502;
+    } else if (c === "ETIMEDOUT" || c === "ECONNABORTED") {
+      errorMsg = "request timed out";
+      httpCode = 504;
+    } else if (c === "ENOTFOUND") {
+      errorMsg = "domain not found";
+      httpCode = 502;
+    } else if (err.httpStatus === 403) {
+      errorMsg = "site blocked (403)";
+      httpCode = 403;
+    } else if (err.httpStatus === 404) {
+      errorMsg = "page not found";
+      httpCode = 404;
+    } else if (err.message?.includes("all tiers failed")) {
+      errorMsg = "all bypass methods failed";
+      httpCode = 502;
     }
 
-    return res.status(statusCode).json({
-      success: false,
-      error: errorMessage,
-    });
+    res.status(httpCode).json({ success: false, error: errorMsg });
   }
 });
 
-/* ── 404 handler for any other routes ── */
+/* ══════════════════════════════════════════════
+   404 & ERROR HANDLERS
+══════════════════════════════════════════════ */
 app.use("*", (req, res) => {
   res.status(404).json({
     success: false,
-    error:
-      "Endpoint not found. Available endpoints: GET /, GET /health, GET /api/token, POST /api/fetch",
-    requestedPath: req.originalUrl,
+    error: "endpoint not found",
+    path: req.originalUrl,
+    hint: "GET /api/endpoints for the list",
   });
 });
 
-/* ── Global error handler ── */
-app.use((err, req, res, _next) => {
+app.use((err, _req, res, _next) => {
+  if (err.message?.startsWith("CORS"))
+    return res.status(403).json({ success: false, error: err.message });
   console.error("[UNHANDLED]", err.message);
-  res.status(500).json({
-    success: false,
-    error: "Internal server error.",
-  });
+  res.status(500).json({ success: false, error: "internal server error" });
 });
 
-/* ── START ── */
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`\n⚡  FETCH BACKEND  →  http://0.0.0.0:${PORT}`);
-  console.log(`    Root            →  http://0.0.0.0:${PORT}/`);
-  console.log(`    Health          →  http://0.0.0.0:${PORT}/health`);
-  console.log(`    Token           →  http://0.0.0.0:${PORT}/api/token`);
-  console.log(`    Fetch (POST)    →  http://0.0.0.0:${PORT}/api/fetch`);
+/* ══════════════════════════════════════════════
+   START + GRACEFUL SHUTDOWN
+══════════════════════════════════════════════ */
+const server = app.listen(PORT, "0.0.0.0", () => {
+  console.log(`\n⚡ FETCH BACKEND v2.0.0 → http://0.0.0.0:${PORT}`);
+  console.log(`    mode: ${process.env.NODE_ENV || "development"}`);
+  console.log(`    tier 2: ${cloudflareScraper ? "✓" : "✗"}`);
+  console.log(`    tier 3: ${puppeteerExtra ? "✓" : "✗"}`);
+  console.log(`    google: ${googleClient ? "✓" : "✗"}`);
+  console.log(`    groq: ${groq ? "✓" : "✗"}`);
   console.log(
-    `    Mode            →  ${process.env.NODE_ENV || "development"}`,
+    `    admin: ${ADMIN_USERNAME} / ${ADMIN_PASSWORD_HASH ? "hash" : ADMIN_PLAIN_PASSWORD ? "plain" : "⚠ not set"}`,
   );
-  console.log(`    Protected       →  ${BLOCKED_DOMAINS.join(", ")}\n`);
+  console.log(
+    `    mongodb: ${mongoose.connection.readyState === 1 ? "✓" : "connecting…"}\n`,
+  );
 });
+
+function gracefulShutdown(sig) {
+  console.log(`\n[${sig}] shutting down...`);
+  server.close(async () => {
+    await mongoose.connection.close(false);
+    console.log("✓ server and db closed");
+    process.exit(0);
+  });
+  setTimeout(() => process.exit(1), 10_000);
+}
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on("uncaughtException", (e) => {
+  console.error("[uncaughtException]", e);
+  gracefulShutdown("uncaughtException");
+});
+process.on("unhandledRejection", (e) =>
+  console.error("[unhandledRejection]", e),
+);

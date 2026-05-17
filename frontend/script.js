@@ -1,25 +1,53 @@
 /* ═══════════════════════════════════════════════
-   FETCH — script.js  v1.0
+   FETCH — script.js  v2.0.0
    by ayocodes
-   frontend logic
+
+   frontend logic. does what it says on the tin.
+   - google auth (when google doesn't break it)
+   - fetch websites (hopefully)
+   - deobfuscate js (ai does the hard work)
+   - profile panel, history, search, all that.
 ═══════════════════════════════════════════════ */
+
 "use strict";
 
-const BACKEND_URL = "https://fetch-v1.onrender.com";
+const BACKEND_URL =
+  window.location.hostname === "localhost"
+    ? "http://localhost:3001"
+    : "https://fetch-v1.onrender.com";
+
+let GOOGLE_CLIENT_ID = null;
 const HIST_KEY = "fetch-history";
 
-function getBackendURL() {
-  return BACKEND_URL;
-}
+/* ──────────────────────────────────────────────
+   auth guard — redirect if not logged in
+────────────────────────────────────────────── */
+(function authGuard() {
+  const token = localStorage.getItem("fetch_token");
+  if (!token && !window.location.pathname.includes("auth.html")) {
+    window.location.replace("auth.html");
+  }
+})();
 
 /* ──────────────────────────────────────────────
-   UTILS
+   config — get google client id from backend
 ────────────────────────────────────────────── */
-function delay(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
+(function loadAppConfig() {
+  fetch(`${BACKEND_URL}/api/config`)
+    .then((r) => r.json())
+    .then((data) => {
+      if (data.googleClientId) GOOGLE_CLIENT_ID = data.googleClientId;
+    })
+    .catch((e) => console.warn("[config]", e.message));
+})();
+
+/* ──────────────────────────────────────────────
+   utils — boring but necessary
+────────────────────────────────────────────── */
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function escapeHtml(s) {
+  if (!s) return "";
   return String(s)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -55,13 +83,18 @@ function getDomain(url) {
   }
 }
 
+function $(id) {
+  return document.getElementById(id);
+}
+
 /* ──────────────────────────────────────────────
-   PRELOADER
+   preloader — fake progress bar, looks cool
 ────────────────────────────────────────────── */
 (function initPreloader() {
-  const preloader = document.getElementById("preloader");
+  const preloader = $("preloader");
   const bar = document.querySelector(".pre-bar");
   const pct = document.querySelector(".pre-percent");
+  if (!preloader) return;
 
   document.body.style.overflow = "hidden";
   let progress = 0;
@@ -87,10 +120,10 @@ function getDomain(url) {
 })();
 
 /* ──────────────────────────────────────────────
-   CUSTOM CURSOR
+   custom cursor — only on desktop, cleanup on exit
 ────────────────────────────────────────────── */
 (function initCursor() {
-  if (window.matchMedia("(max-width:480px)").matches) return;
+  if (window.matchMedia("(max-width:640px)").matches) return;
   const dot = document.querySelector(".cursor-dot");
   const ring = document.querySelector(".cursor-ring");
   if (!dot || !ring) return;
@@ -100,22 +133,25 @@ function getDomain(url) {
     rx = 0,
     ry = 0;
   let rafId = null;
+  let isActive = true;
+
+  function loop() {
+    if (!isActive) return;
+    rx += (mx - rx) * 0.14;
+    ry += (my - ry) * 0.14;
+    ring.style.left = rx + "px";
+    ring.style.top = ry + "px";
+    rafId = requestAnimationFrame(loop);
+  }
 
   document.addEventListener("mousemove", (e) => {
     mx = e.clientX;
     my = e.clientY;
     dot.style.left = mx + "px";
     dot.style.top = my + "px";
-    if (!rafId) {
-      rafId = requestAnimationFrame(function loop() {
-        rx += (mx - rx) * 0.14;
-        ry += (my - ry) * 0.14;
-        ring.style.left = rx + "px";
-        ring.style.top = ry + "px";
-        rafId = requestAnimationFrame(loop);
-      });
-    }
   });
+
+  rafId = requestAnimationFrame(loop);
 
   document.addEventListener("mousedown", () =>
     document.body.classList.add("cursor-click"),
@@ -124,52 +160,66 @@ function getDomain(url) {
     document.body.classList.remove("cursor-click"),
   );
 
-  const hoverSel =
-    'a, button, input, [role="tab"], .step-card, .feature-card, .recent-item, .social-link, .toggle-wrap';
-  document.querySelectorAll(hoverSel).forEach((el) => {
-    el.addEventListener("mouseenter", () =>
-      document.body.classList.add("cursor-hover"),
-    );
-    el.addEventListener("mouseleave", () =>
-      document.body.classList.remove("cursor-hover"),
-    );
+  document.addEventListener("mouseover", (e) => {
+    if (
+      e.target.closest(
+        "a, button, input, [role='tab'], .step-card, .feature-card, .recent-item, .social-link, .toggle-wrap",
+      )
+    ) {
+      document.body.classList.add("cursor-hover");
+    }
+  });
+  document.addEventListener("mouseout", (e) => {
+    if (
+      e.target.closest(
+        "a, button, input, [role='tab'], .step-card, .feature-card, .recent-item, .social-link, .toggle-wrap",
+      )
+    ) {
+      document.body.classList.remove("cursor-hover");
+    }
+  });
+
+  window.addEventListener("beforeunload", () => {
+    isActive = false;
+    if (rafId) cancelAnimationFrame(rafId);
   });
 })();
 
 /* ──────────────────────────────────────────────
-   NAVBAR
+   navbar — mobile menu, scroll effects
 ────────────────────────────────────────────── */
 (function initNavbar() {
-  const navbar = document.getElementById("navbar");
-  const hamburger = document.getElementById("hamburger");
-  const mobileMenu = document.getElementById("mobileMenu");
-
+  const navbar = $("navbar");
+  const hamburger = $("hamburger");
+  const mobileMenu = $("mobileMenu");
   if (!mobileMenu) return;
+
   mobileMenu.setAttribute("aria-hidden", "true");
   mobileMenu.style.display = "none";
 
   window.addEventListener(
     "scroll",
     () => {
-      navbar.classList.toggle("scrolled", window.scrollY > 30);
+      if (navbar) navbar.classList.toggle("scrolled", window.scrollY > 30);
     },
     { passive: true },
   );
 
-  hamburger.addEventListener("click", () => {
-    const isOpen = mobileMenu.classList.toggle("open");
-    hamburger.classList.toggle("active", isOpen);
-    hamburger.setAttribute("aria-expanded", String(isOpen));
-    mobileMenu.setAttribute("aria-hidden", String(!isOpen));
-    mobileMenu.style.display = isOpen ? "block" : "none";
-    document.body.style.overflow = isOpen ? "hidden" : "";
-  });
+  if (hamburger) {
+    hamburger.addEventListener("click", () => {
+      const isOpen = mobileMenu.classList.toggle("open");
+      hamburger.classList.toggle("active", isOpen);
+      hamburger.setAttribute("aria-expanded", String(isOpen));
+      mobileMenu.setAttribute("aria-hidden", String(!isOpen));
+      mobileMenu.style.display = isOpen ? "block" : "none";
+      document.body.style.overflow = isOpen ? "hidden" : "";
+    });
+  }
 
   document.querySelectorAll(".mob-link").forEach((l) => {
     l.addEventListener("click", () => {
       mobileMenu.classList.remove("open");
-      hamburger.classList.remove("active");
-      hamburger.setAttribute("aria-expanded", "false");
+      hamburger?.classList.remove("active");
       mobileMenu.setAttribute("aria-hidden", "true");
       mobileMenu.style.display = "none";
       document.body.style.overflow = "";
@@ -178,11 +228,11 @@ function getDomain(url) {
 })();
 
 /* ──────────────────────────────────────────────
-   THEME
+   theme — dark/light mode, saves to localstorage
 ────────────────────────────────────────────── */
 (function initTheme() {
-  const btn = document.getElementById("themeToggle");
-  const icon = document.getElementById("themeIcon");
+  const btn = $("themeToggle");
+  const icon = $("themeIcon");
   const html = document.documentElement;
   const saved = localStorage.getItem("fetch-theme") || "dark";
 
@@ -190,62 +240,51 @@ function getDomain(url) {
   if (icon)
     icon.className = saved === "dark" ? "fa-solid fa-moon" : "fa-solid fa-sun";
 
-  if (btn) {
-    btn.addEventListener("click", () => {
-      const next =
-        html.getAttribute("data-theme") === "dark" ? "light" : "dark";
-      html.setAttribute("data-theme", next);
-      if (icon)
-        icon.className =
-          next === "dark" ? "fa-solid fa-moon" : "fa-solid fa-sun";
-      localStorage.setItem("fetch-theme", next);
-      showToast(
-        next === "dark" ? "🌙 Dark mode on" : "☀️ Light mode on",
-        "info",
-      );
-    });
-  }
+  btn?.addEventListener("click", () => {
+    const next = html.getAttribute("data-theme") === "dark" ? "light" : "dark";
+    html.setAttribute("data-theme", next);
+    if (icon)
+      icon.className = next === "dark" ? "fa-solid fa-moon" : "fa-solid fa-sun";
+    localStorage.setItem("fetch-theme", next);
+    showToast(next === "dark" ? "dark mode on" : "light mode on", "info");
+  });
 })();
 
 /* ──────────────────────────────────────────────
-   HIDE API BANNER — backend is already connected
+   logout — clear token, back to auth page
 ────────────────────────────────────────────── */
-(function hideBanner() {
-  const banner = document.getElementById("apiBanner");
-  if (banner) banner.classList.add("hidden");
-
-  // Config gear btn now does nothing visible since backend is hardcoded
-  const configBtn = document.getElementById("configBtn");
-  if (configBtn) {
-    configBtn.title = "Backend: " + BACKEND_URL;
-    configBtn.addEventListener("click", () => {
-      showToast("⚡ Connected to " + BACKEND_URL, "info");
-    });
-  }
+(function initLogout() {
+  $("logoutBtn")?.addEventListener("click", () => {
+    localStorage.removeItem("fetch_token");
+    localStorage.removeItem("fetch_user");
+    window.location.replace("/auth.html");
+  });
 })();
 
 /* ──────────────────────────────────────────────
-   PARTICLES
+   canvas particles — floating dots, cleans up after itself
 ────────────────────────────────────────────── */
 (function initParticles() {
-  const canvas = document.getElementById("particleCanvas");
+  const canvas = $("particleCanvas");
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
-  let W,
-    H,
-    particles = [];
+  let W, H;
+  let animationId = null;
+  let isActive = true;
   const mouse = { x: null, y: null };
+  const particles = [];
+  const COLORS = ["rgba(0,229,255,", "rgba(170,255,0,", "rgba(255,183,0,"];
 
   function resize() {
     W = canvas.width = canvas.offsetWidth;
     H = canvas.height = canvas.offsetHeight;
   }
-  window.addEventListener("resize", resize, { passive: true });
+
+  const ro = new ResizeObserver(resize);
+  ro.observe(canvas.parentElement || document.body);
   resize();
 
-  const COLORS = ["rgba(0,229,255,", "rgba(170,255,0,", "rgba(255,183,0,"];
-
-  class P {
+  class Particle {
     reset() {
       this.x = Math.random() * W;
       this.y = Math.random() * H;
@@ -260,28 +299,33 @@ function getDomain(url) {
     constructor() {
       this.reset();
     }
+
     update() {
       this.x += this.vx;
       this.y += this.vy;
       this.life++;
+
       if (mouse.x !== null) {
-        const dx = mouse.x - this.x,
-          dy = mouse.y - this.y;
-        const d = Math.sqrt(dx * dx + dy * dy);
+        const dx = mouse.x - this.x;
+        const dy = mouse.y - this.y;
+        const d = Math.hypot(dx, dy);
         if (d < 100) {
           this.vx -= (dx / d) * 0.03;
           this.vy -= (dy / d) * 0.03;
         }
       }
+
       if (
         this.life > this.maxLife ||
         this.x < 0 ||
         this.x > W ||
         this.y < 0 ||
         this.y > H
-      )
+      ) {
         this.reset();
+      }
     }
+
     draw() {
       ctx.beginPath();
       ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
@@ -290,14 +334,14 @@ function getDomain(url) {
     }
   }
 
-  for (let i = 0; i < 80; i++) particles.push(new P());
+  for (let i = 0; i < 80; i++) particles.push(new Particle());
 
   function connect() {
     for (let i = 0; i < particles.length; i++) {
       for (let j = i + 1; j < particles.length; j++) {
         const dx = particles[i].x - particles[j].x;
         const dy = particles[i].y - particles[j].y;
-        const d = Math.sqrt(dx * dx + dy * dy);
+        const d = Math.hypot(dx, dy);
         if (d < 120) {
           ctx.beginPath();
           ctx.strokeStyle = `rgba(0,229,255,${(1 - d / 120) * 0.08})`;
@@ -315,20 +359,33 @@ function getDomain(url) {
     mouse.x = e.clientX - r.left;
     mouse.y = e.clientY - r.top;
   });
+  canvas.addEventListener("mouseleave", () => {
+    mouse.x = null;
+    mouse.y = null;
+  });
 
-  (function loop() {
+  function loop() {
+    if (!isActive || !ctx) return;
     ctx.clearRect(0, 0, W, H);
     particles.forEach((p) => {
       p.update();
       p.draw();
     });
     connect();
-    requestAnimationFrame(loop);
-  })();
+    animationId = requestAnimationFrame(loop);
+  }
+
+  loop();
+
+  window.addEventListener("beforeunload", () => {
+    isActive = false;
+    if (animationId) cancelAnimationFrame(animationId);
+    ro.disconnect();
+  });
 })();
 
 /* ──────────────────────────────────────────────
-   SCROLL REVEAL
+   scroll reveal — fade in elements when they appear
 ────────────────────────────────────────────── */
 function initScrollReveal() {
   const io = new IntersectionObserver(
@@ -349,7 +406,7 @@ function initScrollReveal() {
 initScrollReveal();
 
 /* ──────────────────────────────────────────────
-   PARALLAX
+   parallax — slow moving background glows
 ────────────────────────────────────────────── */
 (function () {
   const g1 = document.querySelector(".glow-1");
@@ -366,7 +423,7 @@ initScrollReveal();
 })();
 
 /* ──────────────────────────────────────────────
-   COUNTERS
+   counters — animate numbers on stats
 ────────────────────────────────────────────── */
 function startCounters() {
   document.querySelectorAll(".stat-num[data-count]").forEach((el) => {
@@ -385,32 +442,38 @@ function startCounters() {
 }
 
 /* ──────────────────────────────────────────────
-   TOAST
+   toast — small notification popup
 ────────────────────────────────────────────── */
 function showToast(msg, type = "info", duration = 3200) {
-  const t = document.getElementById("toast");
+  const t = $("toast");
   if (!t) return;
   const icons = {
     success: "fa-check-circle",
     error: "fa-circle-xmark",
     info: "fa-circle-info",
   };
-  t.innerHTML = `<i class="fa-solid ${icons[type] || icons.info}" aria-hidden="true"></i><span>${msg}</span>`;
+  const icon = document.createElement("i");
+  icon.className = `fa-solid ${icons[type] || icons.info}`;
+  icon.setAttribute("aria-hidden", "true");
+  const span = document.createElement("span");
+  span.textContent = msg;
+  t.innerHTML = "";
+  t.appendChild(icon);
+  t.appendChild(span);
   t.className = `toast ${type} show`;
   clearTimeout(t._timer);
   t._timer = setTimeout(() => t.classList.remove("show"), duration);
 }
 
 /* ──────────────────────────────────────────────
-   SHAKE ANIMATION
+   shake — error animation for inputs
 ────────────────────────────────────────────── */
 const shakeStyle = document.createElement("style");
 shakeStyle.textContent =
   "@keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-6px)}40%,80%{transform:translateX(6px)}}";
 document.head.appendChild(shakeStyle);
 
-function shakeInput(groupId) {
-  const el = document.getElementById(groupId);
+function shakeElement(el) {
   if (!el) return;
   el.style.animation = "shake 0.4s ease";
   el.addEventListener("animationend", () => (el.style.animation = ""), {
@@ -419,35 +482,35 @@ function shakeInput(groupId) {
 }
 
 /* ──────────────────────────────────────────────
-   UI STATE HELPERS
+   ui state — loading, error, empty, output panels
 ────────────────────────────────────────────── */
 const PANELS = ["emptyState", "loadingState", "errorState", "codeOutput"];
 
 function showPanel(id) {
   PANELS.forEach((p) => {
-    const el = document.getElementById(p);
+    const el = $(p);
     if (el) el.classList.toggle("hidden", p !== id);
   });
 }
 
 function setButtonLoading(id, isLoading) {
-  const btn = document.getElementById(id);
+  const btn = $(id);
   if (!btn) return;
   btn.classList.toggle("loading", isLoading);
   btn.disabled = isLoading;
 }
 
 function setStatus(type, text) {
-  const dot = document.getElementById("statusDot");
-  const label = document.getElementById("statusText");
-  const time = document.getElementById("statusTime");
+  const dot = $("statusDot");
+  const label = $("statusText");
+  const time = $("statusTime");
   if (dot) dot.className = "status-dot " + type;
   if (label) label.textContent = text;
   if (time) time.textContent = new Date().toLocaleTimeString();
 }
 
 /* ──────────────────────────────────────────────
-   HISTORY
+   history — last 10 urls, stored locally
 ────────────────────────────────────────────── */
 function getHistory() {
   try {
@@ -460,54 +523,60 @@ function getHistory() {
 function saveHistory(url) {
   let h = getHistory().filter((u) => u !== url);
   h.unshift(url);
-  h = h.slice(0, 10);
-  localStorage.setItem(HIST_KEY, JSON.stringify(h));
+  localStorage.setItem(HIST_KEY, JSON.stringify(h.slice(0, 10)));
   renderHistory();
 }
 
 function renderHistory() {
-  const list = document.getElementById("recentList");
-  const clearBtn = document.getElementById("clearHistoryBtn");
+  const list = $("recentList");
+  const clearBtn = $("clearHistoryBtn");
   const hist = getHistory();
   if (!list) return;
   list.innerHTML = "";
 
   if (!hist.length) {
-    if (clearBtn) clearBtn.classList.add("hidden");
+    clearBtn?.classList.add("hidden");
     return;
   }
-  if (clearBtn) clearBtn.classList.remove("hidden");
+  clearBtn?.classList.remove("hidden");
 
   hist.forEach((url) => {
-    const domain = getDomain(url);
     const btn = document.createElement("button");
     btn.className = "recent-item";
     btn.setAttribute("role", "listitem");
-    btn.setAttribute("aria-label", "Re-fetch " + url);
-    btn.innerHTML = `<i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i><span>${escapeHtml(domain)}</span>`;
+    btn.setAttribute("aria-label", "re-fetch " + url);
+
+    const icon = document.createElement("i");
+    icon.className = "fa-solid fa-clock-rotate-left";
+    icon.setAttribute("aria-hidden", "true");
+
+    const span = document.createElement("span");
+    span.textContent = getDomain(url);
+
+    btn.appendChild(icon);
+    btn.appendChild(span);
+
     btn.addEventListener("click", () => {
-      document.getElementById("appUrl").value = url;
-      document.getElementById("heroUrl").value = url;
-      document.getElementById("demo").scrollIntoView({ behavior: "smooth" });
+      const appUrlEl = $("appUrl");
+      if (appUrlEl) appUrlEl.value = url;
+      $("demo")?.scrollIntoView({ behavior: "smooth" });
       setTimeout(() => startFetch("app"), 600);
     });
+
     list.appendChild(btn);
   });
 }
 
-const clearHistBtn = document.getElementById("clearHistoryBtn");
-if (clearHistBtn) {
-  clearHistBtn.addEventListener("click", () => {
-    localStorage.removeItem(HIST_KEY);
-    renderHistory();
-    showToast("History cleared", "info");
-  });
-}
+$("clearHistoryBtn")?.addEventListener("click", () => {
+  localStorage.removeItem(HIST_KEY);
+  renderHistory();
+  showToast("history cleared", "info");
+});
 
 renderHistory();
 
 /* ──────────────────────────────────────────────
-   LOADING STEP ANIMATION
+   loading steps — animated steps during fetch
 ────────────────────────────────────────────── */
 let _stepsAborted = false;
 
@@ -519,10 +588,12 @@ async function animateLoadingSteps() {
   for (let i = 0; i < steps.length; i++) {
     if (_stepsAborted) return;
     steps.forEach((s, si) => {
-      s.classList.toggle("active", si === i);
-      if (si < i) {
-        s.classList.add("done");
+      if (si === i) {
+        s.classList.add("active");
+        s.classList.remove("done");
+      } else if (si < i) {
         s.classList.remove("active");
+        s.classList.add("done");
       }
     });
     await delay(Math.random() * 450 + 320);
@@ -534,29 +605,33 @@ async function animateLoadingSteps() {
 }
 
 /* ──────────────────────────────────────────────
-   LINE NUMBERS
+   line numbers — for code blocks
 ────────────────────────────────────────────── */
 function generateLineNumbers(containerId, code) {
-  const el = document.getElementById(containerId);
+  const el = $(containerId);
   if (!el) return;
   const n = (code || "").split("\n").length;
-  el.innerHTML = Array.from(
-    { length: n },
-    (_, i) => `<div>${i + 1}</div>`,
-  ).join("");
+  const frag = document.createDocumentFragment();
+  for (let i = 1; i <= n; i++) {
+    const div = document.createElement("div");
+    div.textContent = i;
+    frag.appendChild(div);
+  }
+  el.innerHTML = "";
+  el.appendChild(frag);
 }
 
 /* ──────────────────────────────────────────────
-   RENDER OUTPUT
+   render output — takes fetch response, fills all tabs
 ────────────────────────────────────────────── */
 let currentData = null;
 
 function renderOutput(data) {
   currentData = data;
 
-  const htmlEl = document.getElementById("htmlCode");
-  const cssEl = document.getElementById("cssCode");
-  const jsEl = document.getElementById("jsCode");
+  const htmlEl = $("htmlCode");
+  const cssEl = $("cssCode");
+  const jsEl = $("jsCode");
 
   if (htmlEl) htmlEl.textContent = data.html || "";
   if (cssEl) cssEl.textContent = data.css || "";
@@ -578,53 +653,49 @@ function renderOutput(data) {
   const s = data.stats || {};
   const countLines = (str) => (str || "").split("\n").length;
 
-  const htmlBadge = document.getElementById("htmlBadge");
-  const cssBadge = document.getElementById("cssBadge");
-  const jsBadge = document.getElementById("jsBadge");
-  const metaBadge = document.getElementById("metaBadge");
-  const assetsBadge = document.getElementById("assetsBadge");
+  const badges = {
+    htmlBadge: (s.htmlLines || countLines(data.html)) + " ln",
+    cssBadge: (s.cssLines || countLines(data.css)) + " ln",
+    jsBadge: (s.jsLines || countLines(data.js)) + " ln",
+    metaBadge: (data.meta || []).length,
+    assetsBadge: (data.assets || []).length,
+  };
+  Object.entries(badges).forEach(([id, val]) => {
+    const el = $(id);
+    if (el) el.textContent = val;
+  });
 
-  if (htmlBadge)
-    htmlBadge.textContent = (s.htmlLines || countLines(data.html)) + " ln";
-  if (cssBadge)
-    cssBadge.textContent = (s.cssLines || countLines(data.css)) + " ln";
-  if (jsBadge) jsBadge.textContent = (s.jsLines || countLines(data.js)) + " ln";
-  if (metaBadge) metaBadge.textContent = (data.meta || []).length;
-  if (assetsBadge) assetsBadge.textContent = (data.assets || []).length;
-
-  const footerInfo = document.getElementById("footerInfo");
+  const footerInfo = $("footerInfo");
   if (footerInfo) {
-    footerInfo.textContent = `HTML ${s.htmlLines || 0} ln  ·  CSS ${s.cssLines || 0} ln  ·  JS ${s.jsLines || 0} ln  ·  ${(data.assets || []).length} assets  ·  ${s.fetchTimeMs || 0}ms`;
+    footerInfo.textContent = `HTML ${s.htmlLines || 0} ln · CSS ${s.cssLines || 0} ln · JS ${s.jsLines || 0} ln · ${(data.assets || []).length} assets · ${s.fetchTimeMs || 0}ms`;
   }
 
-  const frameworkBadge = document.getElementById("frameworkBadge");
-  const frameworkName = document.getElementById("frameworkName");
-  if (data.framework && frameworkBadge) {
-    frameworkBadge.classList.remove("hidden");
-    if (frameworkName)
-      frameworkName.textContent = "Detected: " + data.framework;
-  } else if (frameworkBadge) {
-    frameworkBadge.classList.add("hidden");
+  const frameworkBadge = $("frameworkBadge");
+  const frameworkName = $("frameworkName");
+  if (frameworkBadge) {
+    frameworkBadge.classList.toggle("hidden", !data.framework);
+    if (data.framework && frameworkName)
+      frameworkName.textContent = "detected: " + data.framework;
   }
 
   const assets = data.assets || [];
-  const set = (id, val) => {
-    const el = document.getElementById(id);
+  [
+    ["imgCount", assets.filter((a) => a.type === "image").length],
+    ["fontCount", assets.filter((a) => a.type === "font").length],
+    ["jsFileCount", assets.filter((a) => a.type === "script").length],
+    ["cssFileCount", assets.filter((a) => a.type === "stylesheet").length],
+  ].forEach(([id, val]) => {
+    const el = $(id);
     if (el) el.textContent = val;
-  };
-  set("imgCount", assets.filter((a) => a.type === "image").length);
-  set("fontCount", assets.filter((a) => a.type === "font").length);
-  set("jsFileCount", assets.filter((a) => a.type === "script").length);
-  set("cssFileCount", assets.filter((a) => a.type === "stylesheet").length);
+  });
 
-  const assetInfo = document.getElementById("assetInfo");
-  if (assetInfo) assetInfo.classList.remove("hidden");
+  $("assetInfo")?.classList.remove("hidden");
 
   if (data.pageTitle) {
-    const pageInfo = document.getElementById("pageInfo");
-    const pageTitle = document.getElementById("pageTitle");
-    const fav = document.getElementById("pageFavicon");
-    if (pageInfo) pageInfo.classList.remove("hidden");
+    const pageInfo = $("pageInfo");
+    const pageTitle = $("pageTitle");
+    const fav = $("pageFavicon");
+    pageInfo?.classList.remove("hidden");
     if (pageTitle) pageTitle.textContent = data.pageTitle;
     if (fav) {
       if (data.favicon) {
@@ -637,22 +708,28 @@ function renderOutput(data) {
     }
   }
 
-  const metaGrid = document.getElementById("metaGrid");
+  const metaGrid = $("metaGrid");
   if (metaGrid) {
-    if (data.meta && data.meta.length) {
-      metaGrid.innerHTML = data.meta
-        .map(
-          (m) =>
-            `<div class="meta-item"><div class="meta-key">${escapeHtml(m.name || "")}</div><div class="meta-value">${escapeHtml(m.content || "")}</div></div>`,
-        )
-        .join("");
-    } else {
-      metaGrid.innerHTML =
-        '<div class="meta-item"><div class="meta-key">info</div><div class="meta-value">No meta tags found</div></div>';
-    }
+    metaGrid.innerHTML = "";
+    const metas = data.meta?.length
+      ? data.meta
+      : [{ name: "info", content: "no meta tags found" }];
+    metas.forEach(({ name, content }) => {
+      const item = document.createElement("div");
+      item.className = "meta-item";
+      const key = document.createElement("div");
+      key.className = "meta-key";
+      key.textContent = name || "";
+      const val = document.createElement("div");
+      val.className = "meta-value";
+      val.textContent = content || "";
+      item.appendChild(key);
+      item.appendChild(val);
+      metaGrid.appendChild(item);
+    });
   }
 
-  const assetsList = document.getElementById("assetsList");
+  const assetsList = $("assetsList");
   const typeIcon = {
     image: "fa-image",
     stylesheet: "fa-palette",
@@ -665,22 +742,40 @@ function renderOutput(data) {
   };
 
   if (assetsList) {
+    assetsList.innerHTML = "";
     if (assets.length) {
-      assetsList.innerHTML = assets
-        .map(
-          (a) => `
-          <div class="asset-item">
-            <span class="asset-type-icon"><i class="fa-solid ${typeIcon[a.type] || "fa-paperclip"}" aria-hidden="true"></i></span>
-            <span class="asset-url" title="${escapeHtml(a.url)}">${escapeHtml(a.url)}</span>
-            <button class="asset-copy" onclick="copyText('${escapeHtml(a.url).replace(/'/g, "\\'")}')" aria-label="Copy URL" title="Copy URL">
-              <i class="fa-regular fa-copy" aria-hidden="true"></i>
-            </button>
-          </div>`,
-        )
-        .join("");
+      assets.forEach((a) => {
+        const item = document.createElement("div");
+        item.className = "asset-item";
+
+        const iconEl = document.createElement("span");
+        iconEl.className = "asset-type-icon";
+        const i = document.createElement("i");
+        i.className = `fa-solid ${typeIcon[a.type] || "fa-paperclip"}`;
+        i.setAttribute("aria-hidden", "true");
+        iconEl.appendChild(i);
+
+        const urlEl = document.createElement("span");
+        urlEl.className = "asset-url";
+        urlEl.title = a.url;
+        urlEl.textContent = a.url;
+
+        const copyBtn = document.createElement("button");
+        copyBtn.className = "asset-copy";
+        copyBtn.title = "copy url";
+        copyBtn.setAttribute("aria-label", "copy url");
+        copyBtn.innerHTML =
+          '<i class="fa-regular fa-copy" aria-hidden="true"></i>';
+        copyBtn.addEventListener("click", () => copyText(a.url));
+
+        item.appendChild(iconEl);
+        item.appendChild(urlEl);
+        item.appendChild(copyBtn);
+        assetsList.appendChild(item);
+      });
     } else {
       assetsList.innerHTML =
-        '<div style="padding:2rem;color:var(--text2);font-family:var(--font-mono);font-size:.875rem">No assets found.</div>';
+        '<div style="padding:2rem;color:var(--text2);font-family:var(--font-mono);font-size:.875rem">no assets found.</div>';
     }
   }
 
@@ -689,157 +784,334 @@ function renderOutput(data) {
 }
 
 /* ──────────────────────────────────────────────
-   MAIN FETCH FUNCTION
+   standalone deobfuscator — paste js, get readable code
 ────────────────────────────────────────────── */
-let _fetchAbortController = null;
+const EXAMPLE_OBFUSCATED = `// example of obfuscated javascript
+var _0x1234 = ['hello', 'world', 'console', 'log', 'example'];
+var _0x5678 = function(_0x9abc, _0xdef0) {
+    return _0x1234[_0x9abc] + ' ' + _0x1234[_0xdef0];
+};
+var _0xabcd = function(_0xef01) {
+    return _0x1234[_0xef01];
+};
+console[_0x1234[0x2]](_0x5678(0x0, 0x1));
+console[_0x1234[0x2]](_0xabcd(0x4));`;
+
+let isDeobfuscating = false;
+
+function updateInputStats() {
+  const ta = $("obfuscatedInput");
+  if (!ta) return;
+  const charCount = $("charCount");
+  const lineCount = $("lineCount");
+  if (charCount)
+    charCount.textContent = `${ta.value.length.toLocaleString()} characters`;
+  if (lineCount) lineCount.textContent = `${ta.value.split("\n").length} lines`;
+}
+
+function setDeobfState(state) {
+  const btn = $("deobfuscateStandaloneBtn");
+  const placeholder = $("deobfuscatePlaceholder");
+  const loading = $("deobfuscateLoading");
+  const output = $("deobfuscateOutputContent");
+
+  if (state === "idle") {
+    if (btn) {
+      btn.classList.remove("loading");
+      btn.disabled = false;
+    }
+    if (loading) loading.style.display = "none";
+    if (output) output.style.display = "none";
+    if (placeholder) placeholder.style.display = "flex";
+  } else if (state === "loading") {
+    if (btn) {
+      btn.classList.add("loading");
+      btn.disabled = true;
+    }
+    if (placeholder) placeholder.style.display = "none";
+    if (loading) loading.style.display = "flex";
+    if (output) output.style.display = "none";
+  } else if (state === "done") {
+    if (btn) {
+      btn.classList.remove("loading");
+      btn.disabled = false;
+    }
+    if (loading) loading.style.display = "none";
+    if (output) output.style.display = "block";
+    if (placeholder) placeholder.style.display = "none";
+  }
+}
+
+async function standaloneDeobfuscate() {
+  if (isDeobfuscating) {
+    showToast("deobfuscation already in progress", "info");
+    return;
+  }
+
+  const ta = $("obfuscatedInput");
+  const code = ta?.value.trim();
+
+  if (!code) {
+    showToast("paste some javascript to deobfuscate", "error");
+    return;
+  }
+  if (code.length < 20) {
+    showToast("code too short", "error");
+    return;
+  }
+
+  const token = localStorage.getItem("fetch_token");
+  if (!token) {
+    window.location.replace("/auth.html");
+    return;
+  }
+
+  isDeobfuscating = true;
+  setDeobfState("loading");
+
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/deobfuscate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ jsCode: code }),
+    });
+
+    const contentType = res.headers.get("content-type") || "";
+    if (!contentType.includes("application/json")) {
+      throw new Error(`server returned ${res.status} — unexpected response`);
+    }
+
+    const data = await res.json();
+
+    if (res.status === 401) {
+      localStorage.removeItem("fetch_token");
+      window.location.replace("/auth.html");
+      return;
+    }
+
+    if (data.success) {
+      const codeEl = $("deobfuscatedCode");
+      if (codeEl) {
+        codeEl.textContent = data.deobfuscated;
+        if (window.hljs)
+          try {
+            window.hljs.highlightElement(codeEl);
+          } catch (_) {}
+      }
+      setDeobfState("done");
+      showToast("deobfuscation complete", "success");
+    } else {
+      showToast(data.error || "deobfuscation failed", "error");
+      setDeobfState("idle");
+    }
+  } catch (err) {
+    console.error("[deobfuscate]", err);
+    showToast(
+      err.message || "network error — is the backend running?",
+      "error",
+    );
+    setDeobfState("idle");
+  } finally {
+    isDeobfuscating = false;
+  }
+}
+
+$("deobfuscateStandaloneBtn")?.addEventListener("click", standaloneDeobfuscate);
+$("loadExampleBtn")?.addEventListener("click", () => {
+  const ta = $("obfuscatedInput");
+  if (ta) {
+    ta.value = EXAMPLE_OBFUSCATED;
+    updateInputStats();
+    showToast("example loaded", "info");
+  }
+});
+$("clearInputBtn")?.addEventListener("click", () => {
+  const ta = $("obfuscatedInput");
+  if (ta) {
+    ta.value = "";
+    updateInputStats();
+    setDeobfState("idle");
+    showToast("input cleared", "info");
+  }
+});
+$("uploadFile")?.addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (file.size > 500000) {
+    showToast("file too large (max 500kb)", "error");
+    e.target.value = "";
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    const ta = $("obfuscatedInput");
+    if (ta) {
+      ta.value = ev.target.result;
+      updateInputStats();
+      showToast(`loaded ${file.name}`, "success");
+    }
+  };
+  reader.onerror = () => showToast("error reading file", "error");
+  reader.readAsText(file);
+  e.target.value = "";
+});
+$("copyDeobfuscatedOutputBtn")?.addEventListener("click", () => {
+  const code = $("deobfuscatedCode")?.textContent;
+  if (!code) {
+    showToast("nothing to copy", "error");
+    return;
+  }
+  copyText(code);
+});
+$("downloadDeobfuscatedBtn")?.addEventListener("click", () => {
+  const code = $("deobfuscatedCode")?.textContent;
+  if (!code) {
+    showToast("nothing to download", "error");
+    return;
+  }
+  const blob = new Blob([code], { type: "text/javascript" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `deobfuscated_${Date.now()}.js`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast("downloaded", "success");
+});
+$("obfuscatedInput")?.addEventListener("input", updateInputStats);
+updateInputStats();
+
+/* ──────────────────────────────────────────────
+   main fetch — send url to backend, show results
+────────────────────────────────────────────── */
+let _abortController = null;
 
 async function startFetch(source) {
-  const inputId = source === "hero" ? "heroUrl" : "appUrl";
-  const inputEl = document.getElementById(inputId);
+  const inputEl = source === "hero" ? $("heroUrl") : $("appUrl");
   if (!inputEl) return;
-  const raw = inputEl.value.trim();
 
+  const raw = inputEl.value.trim();
   if (!raw) {
-    showToast("Please enter a URL", "error");
-    shakeInput(source === "hero" ? "heroInputGroup" : "appInputGroup");
+    showToast("enter a url", "error");
+    shakeElement(source === "hero" ? $("heroInputGroup") : $("appInputGroup"));
     return;
   }
 
   const url = normalizeURL(raw);
   if (!isValidURL(url)) {
-    showToast("Invalid URL format", "error");
-    shakeInput(source === "hero" ? "heroInputGroup" : "appInputGroup");
+    showToast("invalid url format", "error");
+    shakeElement(source === "hero" ? $("heroInputGroup") : $("appInputGroup"));
     return;
   }
 
-  const heroUrl = document.getElementById("heroUrl");
-  const appUrl = document.getElementById("appUrl");
-  if (heroUrl) heroUrl.value = url;
-  if (appUrl) appUrl.value = url;
+  [$("heroUrl"), $("appUrl")].forEach((el) => {
+    if (el) el.value = url;
+  });
 
   if (source === "hero") {
-    document.getElementById("demo").scrollIntoView({ behavior: "smooth" });
+    $("demo")?.scrollIntoView({ behavior: "smooth" });
     await delay(700);
   }
 
-  if (_fetchAbortController) _fetchAbortController.abort();
-  _fetchAbortController = new AbortController();
+  if (_abortController) _abortController.abort();
+  _abortController = new AbortController();
   _stepsAborted = false;
 
-  const frameworkBadge = document.getElementById("frameworkBadge");
-  const assetInfo = document.getElementById("assetInfo");
-  const pageInfo = document.getElementById("pageInfo");
-  if (frameworkBadge) frameworkBadge.classList.add("hidden");
-  if (assetInfo) assetInfo.classList.add("hidden");
-  if (pageInfo) pageInfo.classList.add("hidden");
+  ["frameworkBadge", "assetInfo", "pageInfo"].forEach((id) =>
+    $(id)?.classList.add("hidden"),
+  );
 
   setButtonLoading("heroFetchBtn", true);
   setButtonLoading("appFetchBtn", true);
-  setStatus("running", "Fetching " + getDomain(url) + "...");
+  setStatus("running", "fetching " + getDomain(url) + "…");
   showPanel("loadingState");
 
   const stepsPromise = animateLoadingSteps();
+  const token = localStorage.getItem("fetch_token");
+
+  if (!token) {
+    window.location.replace("/auth.html");
+    return;
+  }
 
   try {
-    const backendURL = getBackendURL();
+    const timeoutId = setTimeout(() => _abortController.abort(), 35000);
 
-    let token = "",
-      timestamp = "";
-    try {
-      const tokenResp = await fetch(`${backendURL}/api/token`, {
-        signal: _fetchAbortController.signal,
-      });
-      const tokenData = await tokenResp.json();
-      token = tokenData.token || "";
-      timestamp = tokenData.timestamp || "";
-    } catch (e) {
-      if (e.name === "AbortError") throw e;
-    }
-
-    const timeoutId = setTimeout(() => _fetchAbortController.abort(), 35000);
-
-    const optAssets = document.getElementById("optAssets");
-    const optFramework = document.getElementById("optFramework");
-
-    const resp = await fetch(`${backendURL}/api/fetch`, {
+    const resp = await fetch(`${BACKEND_URL}/api/fetch`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        url,
-        includeAssets: optAssets ? optAssets.checked : true,
-        detectFramework: optFramework ? optFramework.checked : true,
-        token,
-        timestamp,
-      }),
-      signal: _fetchAbortController.signal,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ url }),
+      signal: _abortController.signal,
     });
 
     clearTimeout(timeoutId);
     _stepsAborted = false;
     await stepsPromise;
 
+    if (resp.status === 401) {
+      localStorage.removeItem("fetch_token");
+      window.location.replace("/auth.html");
+      return;
+    }
+
     if (!resp.ok) {
       const err = await resp
         .json()
-        .catch(() => ({ error: `Server error ${resp.status}` }));
+        .catch(() => ({ error: `server error ${resp.status}` }));
       throw new Error(err.error || `HTTP ${resp.status}`);
     }
 
     const data = await resp.json();
-    if (!data.success) throw new Error(data.error || "Unknown server error");
+    if (!data.success) throw new Error(data.error || "unknown server error");
 
     renderOutput(data);
     saveHistory(url);
     setStatus(
       "success",
-      `✓ Done — ${getDomain(url)} extracted in ${data.stats?.fetchTimeMs || 0}ms`,
+      `✓ done — ${getDomain(url)} extracted in ${data.stats?.fetchTimeMs || 0}ms`,
     );
-    showToast(`✅ ${getDomain(url)} fetched!`, "success");
+    showToast(`✅ ${getDomain(url)} fetched`, "success");
   } catch (err) {
     _stepsAborted = true;
     await stepsPromise.catch(() => {});
 
     if (err.name === "AbortError") {
       showPanel("emptyState");
-      setStatus("idle", "Cancelled");
-      setButtonLoading("heroFetchBtn", false);
-      setButtonLoading("appFetchBtn", false);
+      setStatus("idle", "cancelled");
       return;
     }
 
-    let msg = err.message || "Unknown error";
-    if (
-      msg.includes("Failed to fetch") ||
-      msg.includes("NetworkError") ||
-      msg.includes("Load failed")
-    ) {
-      msg =
-        "Cannot reach the backend. The server may be waking up — please wait 30 seconds and try again. (Render free tier sleeps after inactivity.)";
-    }
-    if (msg.includes("AbortError") || msg.toLowerCase().includes("timed out")) {
-      msg =
-        "Request timed out (35s). The site may be too slow or blocking scrapers.";
+    let msg = err.message || "unknown error";
+    if (/failed to fetch|networkerror/i.test(msg)) {
+      msg = "cannot reach backend — cold start? wait 30 seconds and retry";
     }
 
-    const errorTitle = document.getElementById("errorTitle");
-    const errorMsg = document.getElementById("errorMsg");
-    if (errorTitle) errorTitle.textContent = "Fetch Failed";
+    const errorTitle = $("errorTitle");
+    const errorMsg = $("errorMsg");
+    if (errorTitle) errorTitle.textContent = "fetch failed";
     if (errorMsg) errorMsg.textContent = msg;
     showPanel("errorState");
-    setStatus("error", "Error — " + msg.slice(0, 60));
+    setStatus("error", "error — " + msg.slice(0, 60));
     showToast("❌ " + msg, "error", 5000);
   } finally {
     setButtonLoading("heroFetchBtn", false);
     setButtonLoading("appFetchBtn", false);
-    _fetchAbortController = null;
+    _abortController = null;
   }
 }
 
-const retryBtn = document.getElementById("retryBtn");
-if (retryBtn) retryBtn.addEventListener("click", () => startFetch("app"));
+$("retryBtn")?.addEventListener("click", () => startFetch("app"));
 
 /* ──────────────────────────────────────────────
-   TAB SWITCHING
+   tab switching — html, css, js tabs
 ────────────────────────────────────────────── */
 function switchTab(tabName) {
   document.querySelectorAll(".code-tab").forEach((tab) => {
@@ -848,26 +1120,25 @@ function switchTab(tabName) {
     tab.setAttribute("aria-selected", String(active));
   });
   document.querySelectorAll(".panel").forEach((p) => p.classList.add("hidden"));
-  const panel = document.getElementById("panel-" + tabName);
-  if (panel) panel.classList.remove("hidden");
+  $("panel-" + tabName)?.classList.remove("hidden");
 }
 
 document.querySelectorAll(".code-tab").forEach((tab) => {
   tab.addEventListener("click", () => {
     switchTab(tab.dataset.tab);
-    const q = document.getElementById("searchInput")?.value;
+    const q = $("searchInput")?.value;
     if (q && searchActive) setTimeout(() => doSearch(q), 50);
   });
 });
 
 /* ──────────────────────────────────────────────
-   COPY
+   copy — clipboard with fallback
 ────────────────────────────────────────────── */
 function copyText(text) {
   if (navigator.clipboard && window.isSecureContext) {
     navigator.clipboard
       .writeText(text)
-      .then(() => showToast("Copied!", "success"))
+      .then(() => showToast("copied", "success"))
       .catch(() => fallbackCopy(text));
   } else {
     fallbackCopy(text);
@@ -877,209 +1148,197 @@ function copyText(text) {
 function fallbackCopy(text) {
   const ta = document.createElement("textarea");
   ta.value = text;
-  ta.style.cssText = "position:fixed;opacity:0;top:0;left:0";
+  ta.style.cssText =
+    "position:fixed;opacity:0;top:0;left:0;pointer-events:none";
   document.body.appendChild(ta);
   ta.select();
   try {
     document.execCommand("copy");
-    showToast("Copied!", "success");
+    showToast("copied", "success");
   } catch {
-    showToast("Copy failed", "error");
+    showToast("copy failed — copy manually", "error");
   }
   document.body.removeChild(ta);
 }
 
-const copyBtn = document.getElementById("copyBtn");
-if (copyBtn) {
-  copyBtn.addEventListener("click", () => {
-    if (!currentData) {
-      showToast("Nothing to copy yet", "error");
-      return;
-    }
-    const tab = document.querySelector(".code-tab.active")?.dataset.tab;
-    const map = {
-      html: currentData.html,
-      css: currentData.css,
-      js: currentData.js,
-    };
-    if (map[tab]) copyText(map[tab]);
-    else showToast("Copy not available for this tab", "info");
-  });
-}
+$("copyBtn")?.addEventListener("click", () => {
+  if (!currentData) {
+    showToast("nothing to copy", "error");
+    return;
+  }
+  const tab = document.querySelector(".code-tab.active")?.dataset.tab;
+  const map = {
+    html: currentData.html,
+    css: currentData.css,
+    js: currentData.js,
+  };
+  if (map[tab]) copyText(map[tab]);
+  else showToast("copy not available", "info");
+});
 
 /* ──────────────────────────────────────────────
-   DOWNLOAD ZIP
+   download zip — bundles everything
 ────────────────────────────────────────────── */
-const downloadBtn = document.getElementById("downloadBtn");
-if (downloadBtn) {
-  downloadBtn.addEventListener("click", async () => {
-    if (!currentData) {
-      showToast("Fetch a site first!", "error");
-      return;
-    }
-    if (!window.JSZip) {
-      showToast("JSZip not loaded", "error");
-      return;
-    }
+$("downloadBtn")?.addEventListener("click", async () => {
+  if (!currentData) {
+    showToast("fetch a site first", "error");
+    return;
+  }
+  if (!window.JSZip) {
+    showToast("jszip not loaded", "error");
+    return;
+  }
 
-    const zip = new window.JSZip();
-    zip.file("index.html", currentData.html || "");
-    zip.file("styles.css", currentData.css || "");
-    zip.file("main.js", currentData.js || "");
+  const zip = new window.JSZip();
+  const domain = getDomain(currentData.url || "site");
 
-    if (currentData.meta?.length) {
-      zip.file(
-        "meta.txt",
-        currentData.meta.map((m) => `${m.name}: ${m.content}`).join("\n"),
-      );
-    }
-    if (currentData.assets?.length) {
-      zip.file(
-        "assets.txt",
-        currentData.assets.map((a) => `[${a.type}] ${a.url}`).join("\n"),
-      );
-    }
+  zip.file("index.html", currentData.html || "");
+  zip.file("styles.css", currentData.css || "");
+  zip.file("main.js", currentData.js || "");
 
-    const domain = getDomain(currentData.url);
+  if (currentData.meta?.length) {
     zip.file(
-      "README.md",
-      `# ${currentData.pageTitle || domain}\n\n` +
-        `Extracted by FETCH — ayocodes\n` +
-        `Source: ${currentData.url}\n` +
-        `Date: ${new Date().toISOString()}\n` +
-        `Framework: ${currentData.framework || "Unknown"}\n\n` +
-        `## Files\n- index.html\n- styles.css\n- main.js\n- meta.txt\n- assets.txt\n`,
+      "meta.txt",
+      currentData.meta.map((m) => `${m.name}: ${m.content}`).join("\n"),
     );
+  }
+  if (currentData.assets?.length) {
+    zip.file(
+      "assets.txt",
+      currentData.assets.map((a) => `[${a.type}] ${a.url}`).join("\n"),
+    );
+  }
 
-    try {
-      const blob = await zip.generateAsync({
-        type: "blob",
-        compression: "DEFLATE",
-        compressionOptions: { level: 6 },
-      });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = `fetch-${domain.replace(/\./g, "-")}.zip`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(a.href);
-      showToast("ZIP downloaded!", "success");
-    } catch (e) {
-      showToast("ZIP failed: " + e.message, "error");
-    }
-  });
-}
+  zip.file(
+    "README.md",
+    `# ${currentData.pageTitle || domain}\n\nextracted by fetch v2.0.0 — ayocodes\nsource: ${currentData.url}\ndate: ${new Date().toISOString()}\nframework: ${currentData.framework || "unknown"}\n\n## files\n- index.html\n- styles.css\n- main.js\n- meta.txt\n- assets.txt\n`,
+  );
+
+  try {
+    const blob = await zip.generateAsync({
+      type: "blob",
+      compression: "DEFLATE",
+      compressionOptions: { level: 6 },
+    });
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = `fetch-${domain.replace(/\./g, "-")}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+    showToast("zip downloaded", "success");
+  } catch (e) {
+    showToast("zip failed: " + e.message, "error");
+  }
+});
 
 /* ──────────────────────────────────────────────
-   SHARE
+   share — native share or copy url
 ────────────────────────────────────────────── */
-const shareBtn = document.getElementById("shareBtn");
-if (shareBtn) {
-  shareBtn.addEventListener("click", () => {
-    if (!currentData) {
-      showToast("Fetch a site first!", "error");
-      return;
-    }
-    if (navigator.share) {
-      navigator.share({
-        title: "FETCH Result",
-        text: `Extracted code from ${currentData.url}`,
-        url: window.location.href,
-      });
-    } else {
-      copyText(currentData.url);
-      showToast("Source URL copied!", "info");
-    }
-  });
-}
+$("shareBtn")?.addEventListener("click", () => {
+  if (!currentData) {
+    showToast("fetch a site first", "error");
+    return;
+  }
+  if (navigator.share) {
+    navigator.share({
+      title: "fetch result",
+      text: `extracted code from ${currentData.url}`,
+      url: window.location.href,
+    });
+  } else {
+    copyText(currentData.url);
+    showToast("source url copied", "info");
+  }
+});
 
 /* ──────────────────────────────────────────────
-   WORD WRAP
+   word wrap — toggle for code view
 ────────────────────────────────────────────── */
 let wordWrap = false;
-const wrapBtn = document.getElementById("wrapBtn");
-if (wrapBtn) {
-  wrapBtn.addEventListener("click", () => {
-    wordWrap = !wordWrap;
-    document
-      .querySelectorAll(".panel pre")
-      .forEach((p) => (p.style.whiteSpace = wordWrap ? "pre-wrap" : "pre"));
-    showToast(wordWrap ? "Word wrap on" : "Word wrap off", "info");
-  });
-}
+$("wrapBtn")?.addEventListener("click", () => {
+  wordWrap = !wordWrap;
+  document
+    .querySelectorAll(".panel pre")
+    .forEach((p) => (p.style.whiteSpace = wordWrap ? "pre-wrap" : "pre"));
+  showToast(wordWrap ? "word wrap on" : "word wrap off", "info");
+});
 
 /* ──────────────────────────────────────────────
-   IN-CODE SEARCH
+   search — highlight text in code tabs
 ────────────────────────────────────────────── */
 let searchActive = false;
 let searchTimeout = null;
 
-const searchBtn = document.getElementById("searchBtn");
-if (searchBtn) {
-  searchBtn.addEventListener("click", () => {
-    const bar = document.getElementById("searchBar");
-    searchActive = !searchActive;
-    bar.classList.toggle("hidden", !searchActive);
-    if (searchActive) document.getElementById("searchInput").focus();
-    else clearSearch();
-  });
-}
+$("searchBtn")?.addEventListener("click", () => {
+  const bar = $("searchBar");
+  searchActive = !searchActive;
+  bar?.classList.toggle("hidden", !searchActive);
+  if (searchActive) $("searchInput")?.focus();
+  else clearSearch();
+});
 
-const closeSearch = document.getElementById("closeSearch");
-if (closeSearch) {
-  closeSearch.addEventListener("click", () => {
-    document.getElementById("searchBar").classList.add("hidden");
-    searchActive = false;
-    clearSearch();
-    document.getElementById("searchInput").value = "";
-    document.getElementById("searchCount").textContent = "";
-  });
-}
+$("closeSearch")?.addEventListener("click", () => {
+  $("searchBar")?.classList.add("hidden");
+  searchActive = false;
+  clearSearch();
+  const si = $("searchInput");
+  if (si) si.value = "";
+  const sc = $("searchCount");
+  if (sc) sc.textContent = "";
+});
 
-const searchInput = document.getElementById("searchInput");
-if (searchInput) {
-  searchInput.addEventListener("input", function () {
-    clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(() => doSearch(this.value), 300);
-  });
-}
+$("searchInput")?.addEventListener("input", function () {
+  clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(() => doSearch(this.value), 300);
+});
 
 function doSearch(query) {
-  const countEl = document.getElementById("searchCount");
+  const countEl = $("searchCount");
   if (!currentData || !query.trim()) {
     clearSearch();
     if (countEl) countEl.textContent = "";
     return;
   }
+
   const activeTab = document.querySelector(".code-tab.active")?.dataset.tab;
   if (!["html", "css", "js"].includes(activeTab)) {
-    if (countEl) countEl.textContent = "Search works on code tabs";
+    if (countEl) countEl.textContent = "search works on code tabs only";
     return;
   }
-  const codeEl = document.getElementById(activeTab + "Code");
+
+  const codeEl = $(activeTab + "Code");
   if (!codeEl) return;
+
   const raw =
     activeTab === "html"
       ? currentData.html
       : activeTab === "css"
         ? currentData.css
         : currentData.js;
-  const escaped = escapeHtml(raw);
+  if (!raw) return;
+
   const regex = new RegExp(escapeRegex(query), "gi");
   let count = 0;
-  const hilit = escaped.replace(regex, (m) => {
+
+  const escaped = escapeHtml(raw);
+  const highlighted = escaped.replace(regex, (m) => {
     count++;
     return `<mark class="search-highlight">${m}</mark>`;
   });
-  codeEl.innerHTML = hilit;
+
+  codeEl.innerHTML = highlighted;
   if (countEl)
     countEl.textContent = count
       ? `${count} result${count !== 1 ? "s" : ""}`
       : "0 results";
+
   if (count) {
-    const first = codeEl.querySelector("mark");
-    if (first) first.scrollIntoView({ behavior: "smooth", block: "center" });
+    const firstMark = codeEl.querySelector("mark");
+    if (firstMark)
+      firstMark.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 }
 
@@ -1087,13 +1346,14 @@ function clearSearch() {
   if (!currentData) return;
   const activeTab = document.querySelector(".code-tab.active")?.dataset.tab;
   if (!["html", "css", "js"].includes(activeTab)) return;
+
   const raw =
     activeTab === "html"
       ? currentData.html
       : activeTab === "css"
         ? currentData.css
         : currentData.js;
-  const el = document.getElementById(activeTab + "Code");
+  const el = $(activeTab + "Code");
   if (el) {
     el.textContent = raw;
     if (window.hljs)
@@ -1105,65 +1365,205 @@ function clearSearch() {
 }
 
 /* ──────────────────────────────────────────────
-   FULLSCREEN
+   fullscreen — make the app go fullscreen
 ────────────────────────────────────────────── */
-const fullscreenBtn = document.getElementById("fullscreenBtn");
-if (fullscreenBtn) {
-  fullscreenBtn.addEventListener("click", () => {
-    const shell = document.querySelector(".app-shell");
-    if (!document.fullscreenElement) {
-      shell.requestFullscreen?.().catch(() => {});
-    } else {
-      document.exitFullscreen?.();
+$("fullscreenBtn")?.addEventListener("click", () => {
+  const shell = document.querySelector(".app-shell");
+  if (!shell) return;
+  if (!document.fullscreenElement) shell.requestFullscreen?.().catch(() => {});
+  else document.exitFullscreen?.();
+});
+
+/* ──────────────────────────────────────────────
+   profile panel — view and edit user info
+────────────────────────────────────────────── */
+(function initProfile() {
+  const btn = document.getElementById("profileBtn");
+  const panel = document.getElementById("profilePanel");
+  const overlay = document.getElementById("profileOverlay");
+  const closeB = document.getElementById("profileClose");
+  if (!btn || !panel) return;
+
+  let profileLoaded = false;
+
+  async function loadProfile() {
+    const token = localStorage.getItem("fetch_token");
+    if (!token) return;
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/auth/profile`, {
+        headers: { Authorization: "Bearer " + token },
+      });
+      const data = await res.json();
+      if (!data.success) return;
+
+      const u = data.user;
+
+      const initials = (
+        (u.name || u.email || "?")
+          .split(" ")
+          .map((w) => w[0])
+          .join("")
+          .toUpperCase() || "?"
+      ).slice(0, 2);
+      const avatarEl = document.getElementById("profileAvatar");
+      if (avatarEl) {
+        if (u.avatar) {
+          avatarEl.innerHTML = `<img src="${u.avatar}" alt="${initials}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" style="width:100%;height:100%;object-fit:cover;border-radius:50%"><span class="profile-initials" style="display:none">${initials}</span>`;
+        } else {
+          avatarEl.innerHTML = `<span class="profile-initials">${initials}</span>`;
+        }
+      }
+
+      const navAvatar = document.getElementById("profileBtnAvatar");
+      if (navAvatar) {
+        if (u.avatar) {
+          navAvatar.innerHTML = `<img src="${u.avatar}" alt="${initials}" onerror="this.innerHTML='${initials}'" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`;
+        } else {
+          navAvatar.textContent = initials;
+        }
+      }
+
+      const fields = {
+        profileName: u.name || "—",
+        profileEmail: u.email || "—",
+        profileProvider: u.provider || "local",
+        profileJoined: u.createdAt
+          ? new Date(u.createdAt).toLocaleDateString("en-GB", {
+              day: "2-digit",
+              month: "short",
+              year: "numeric",
+            })
+          : "—",
+        profileLastLogin: u.lastLogin
+          ? new Date(u.lastLogin).toLocaleDateString("en-GB", {
+              day: "2-digit",
+              month: "short",
+              year: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : "—",
+        profileFetches: (u.stats?.fetches ?? "—").toString(),
+        profileDeobf: (u.stats?.deobfuscations ?? "—").toString(),
+      };
+      Object.entries(fields).forEach(([id, val]) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = val;
+      });
+
+      const badge = document.getElementById("profileProviderBadge");
+      if (badge) {
+        badge.textContent = u.provider;
+        badge.className = `profile-badge provider-${u.provider}`;
+      }
+
+      const nameInput = document.getElementById("profileNameInput");
+      if (nameInput) nameInput.value = u.name || "";
+
+      profileLoaded = true;
+    } catch (e) {
+      console.warn("[profile]", e.message);
     }
+  }
+
+  function openPanel() {
+    panel.classList.add("open");
+    overlay?.classList.add("open");
+    document.body.style.overflow = "hidden";
+    if (!profileLoaded) loadProfile();
+  }
+
+  function closePanel() {
+    panel.classList.remove("open");
+    overlay?.classList.remove("open");
+    document.body.style.overflow = "";
+  }
+
+  btn.addEventListener("click", openPanel);
+  closeB?.addEventListener("click", closePanel);
+  overlay?.addEventListener("click", closePanel);
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && panel.classList.contains("open")) closePanel();
+  });
+
+  const saveNameBtn = document.getElementById("profileSaveName");
+  saveNameBtn?.addEventListener("click", async () => {
+    const nameInput = document.getElementById("profileNameInput");
+    const name = nameInput?.value.trim();
+    if (!name) return;
+    const token = localStorage.getItem("fetch_token");
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/auth/profile`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + token,
+        },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        const stored = JSON.parse(localStorage.getItem("fetch_user") || "{}");
+        stored.name = name;
+        localStorage.setItem("fetch_user", JSON.stringify(stored));
+        profileLoaded = false;
+        loadProfile();
+        showToast("name updated", "success");
+      } else {
+        showToast(data.error || "update failed", "error");
+      }
+    } catch {
+      showToast("could not save", "error");
+    }
+  });
+})();
+
+/* ──────────────────────────────────────────────
+   url input wiring — sync hero and app inputs
+────────────────────────────────────────────── */
+const heroFetchBtn = $("heroFetchBtn");
+const heroUrlInput = $("heroUrl");
+const appFetchBtn = $("appFetchBtn");
+const appUrlInput = $("appUrl");
+
+heroFetchBtn?.addEventListener("click", () => startFetch("hero"));
+appFetchBtn?.addEventListener("click", () => startFetch("app"));
+heroUrlInput?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") startFetch("hero");
+});
+appUrlInput?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") startFetch("app");
+});
+
+if (heroUrlInput && appUrlInput) {
+  heroUrlInput.addEventListener("input", function () {
+    appUrlInput.value = this.value;
+  });
+  appUrlInput.addEventListener("input", function () {
+    heroUrlInput.value = this.value;
   });
 }
 
 /* ──────────────────────────────────────────────
-   HERO & APP TRIGGERS
-────────────────────────────────────────────── */
-const heroFetchBtn = document.getElementById("heroFetchBtn");
-const heroUrlInput = document.getElementById("heroUrl");
-const appFetchBtn = document.getElementById("appFetchBtn");
-const appUrlInput = document.getElementById("appUrl");
-
-if (heroFetchBtn)
-  heroFetchBtn.addEventListener("click", () => startFetch("hero"));
-if (heroUrlInput)
-  heroUrlInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") startFetch("hero");
-  });
-if (appFetchBtn) appFetchBtn.addEventListener("click", () => startFetch("app"));
-if (appUrlInput)
-  appUrlInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") startFetch("app");
-  });
-
-/* Sync inputs */
-if (heroUrlInput)
-  heroUrlInput.addEventListener("input", function () {
-    if (appUrlInput) appUrlInput.value = this.value;
-  });
-if (appUrlInput)
-  appUrlInput.addEventListener("input", function () {
-    if (heroUrlInput) heroUrlInput.value = this.value;
-  });
-
-/* ──────────────────────────────────────────────
-   MAGNETIC BUTTONS
+   magnetic buttons — fun hover effect
 ────────────────────────────────────────────── */
 document
-  .querySelectorAll(".btn-primary, .fetch-btn, .app-fetch-btn")
+  .querySelectorAll(
+    ".btn-primary:not(.btn-loading), .app-fetch-btn, .deobfuscate-standalone-btn",
+  )
   .forEach((btn) => {
     btn.addEventListener("mousemove", function (e) {
+      if (this.disabled) return;
       const r = this.getBoundingClientRect();
       const dx = (e.clientX - (r.left + r.width / 2)) * 0.2;
       const dy = (e.clientY - (r.top + r.height / 2)) * 0.2;
       this.style.transform = `translate(${dx}px, ${dy}px)`;
     });
     btn.addEventListener("mouseleave", function () {
-      this.style.transform = "";
       this.style.transition = "transform .4s cubic-bezier(.16,1,.3,1)";
+      this.style.transform = "";
     });
     btn.addEventListener("mouseenter", function () {
       this.style.transition = "transform .1s ease";
@@ -1171,7 +1571,7 @@ document
   });
 
 /* ──────────────────────────────────────────────
-   ACTIVE NAV ON SCROLL
+   active nav on scroll — highlight current section
 ────────────────────────────────────────────── */
 (function () {
   const sections = document.querySelectorAll("section[id]");
@@ -1193,65 +1593,73 @@ document
 })();
 
 /* ──────────────────────────────────────────────
-   KEYBOARD SHORTCUTS
+   keyboard shortcuts — ctrl+k focus url, ctrl+enter fetch
 ────────────────────────────────────────────── */
 document.addEventListener("keydown", (e) => {
-  if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+  const mod = e.ctrlKey || e.metaKey;
+
+  if (mod && e.key === "k") {
     e.preventDefault();
-    if (appUrlInput) appUrlInput.focus();
-    document.getElementById("demo")?.scrollIntoView({ behavior: "smooth" });
+    $("appUrl")?.focus();
+    $("demo")?.scrollIntoView({ behavior: "smooth" });
   }
-  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") startFetch("app");
+
+  if (mod && e.key === "Enter") startFetch("app");
+
   if (e.key === "Escape") {
-    const mm = document.getElementById("mobileMenu");
+    const mm = $("mobileMenu");
     if (mm?.classList.contains("open")) {
       mm.classList.remove("open");
-      document.getElementById("hamburger")?.classList.remove("active");
+      $("hamburger")?.classList.remove("active");
       mm.setAttribute("aria-hidden", "true");
       mm.style.display = "none";
       document.body.style.overflow = "";
     }
-    if (searchActive) document.getElementById("closeSearch")?.click();
+    if (searchActive) $("closeSearch")?.click();
   }
 });
 
 /* ──────────────────────────────────────────────
-   TERMINAL TYPEWRITER
+   terminal typewriter — fake terminal animation
 ────────────────────────────────────────────── */
 (function initTerminal() {
-  const cmd = document.getElementById("termCmd");
-  const out = document.getElementById("termOutput");
+  const cmd = $("termCmd");
+  const out = $("termOutput");
   if (!cmd || !out) return;
 
   const seqs = [
     {
       command: "node server.js",
       lines: [
-        { text: "⚡ FETCH backend running on :10000", cls: "t-green", d: 500 },
-        { text: "   Health: /health ✓", cls: "t-muted", d: 800 },
+        { text: "⚡ fetch backend running on :10000", cls: "t-green", d: 500 },
+        { text: "   health: /health ✓", cls: "t-muted", d: 800 },
         { text: "", cls: "", d: 1100 },
-        { text: "POST /api/fetch  200  1247ms", cls: "t-cyan", d: 1600 },
-        { text: "→ github.com — React 18 detected", cls: "t-muted", d: 1900 },
-        { text: "→ 412 ln HTML · 891 ln CSS", cls: "t-muted", d: 2200 },
-        { text: "✓ Extraction complete", cls: "t-green", d: 2600 },
+        { text: "post /api/fetch  200  1247ms", cls: "t-cyan", d: 1600 },
+        { text: "→ github.com — react 18 detected", cls: "t-muted", d: 1900 },
+        { text: "→ 412 ln html · 891 ln css", cls: "t-muted", d: 2200 },
+        { text: "✓ extraction complete", cls: "t-green", d: 2600 },
       ],
     },
     {
       command: 'curl /api/fetch -d \'{"url":"stripe.com"}\'',
       lines: [
-        { text: "→ Connecting to stripe.com...", cls: "t-muted", d: 400 },
-        { text: "→ Parsing 2,891 DOM elements...", cls: "t-muted", d: 800 },
-        { text: "→ Fetching 4 stylesheets...", cls: "t-muted", d: 1200 },
-        { text: "→ Fetching 7 JS bundles...", cls: "t-muted", d: 1600 },
-        { text: "✓ Framework: Next.js 14", cls: "t-cyan", d: 2000 },
-        { text: "✓ 1,247 ln CSS · 892 ln JS", cls: "t-green", d: 2300 },
-        { text: "✓ Done in 1.87s ⚡", cls: "t-amber", d: 2600 },
+        { text: "→ connecting to stripe.com…", cls: "t-muted", d: 400 },
+        { text: "→ parsing 2,891 dom elements…", cls: "t-muted", d: 800 },
+        { text: "→ fetching 4 stylesheets…", cls: "t-muted", d: 1200 },
+        { text: "→ fetching 7 js bundles…", cls: "t-muted", d: 1600 },
+        { text: "✓ framework: next.js 14", cls: "t-cyan", d: 2000 },
+        { text: "✓ 1,247 ln css · 892 ln js", cls: "t-green", d: 2300 },
+        { text: "✓ done in 1.87s ⚡", cls: "t-amber", d: 2600 },
       ],
     },
   ];
 
   let si = 0;
+  let running = false;
+
   async function run() {
+    if (running) return;
+    running = true;
     const s = seqs[si % seqs.length];
     cmd.textContent = "";
     out.innerHTML = "";
@@ -1264,12 +1672,13 @@ document.addEventListener("keydown", (e) => {
     for (let i = 0; i < s.lines.length; i++) {
       const l = s.lines[i];
       const prev = s.lines[i - 1];
-      const wait = l.d - (prev?.d || 0);
-      await delay(wait);
+      await delay(l.d - (prev?.d || 0));
+
       if (!l.text) {
         out.appendChild(document.createElement("br"));
         continue;
       }
+
       const d = document.createElement("div");
       d.className = "t-line " + l.cls;
       d.textContent = l.text;
@@ -1279,10 +1688,11 @@ document.addEventListener("keydown", (e) => {
 
     await delay(4000);
     si++;
-    out.style.opacity = "0";
     out.style.transition = "opacity .5s";
+    out.style.opacity = "0";
     await delay(500);
     out.style.opacity = "1";
+    running = false;
     run();
   }
 
@@ -1295,145 +1705,61 @@ document.addEventListener("keydown", (e) => {
     },
     { threshold: 0.3 },
   );
+
   const tc = document.querySelector(".terminal-card");
   if (tc) io.observe(tc);
+  else run();
 })();
 
 /* ──────────────────────────────────────────────
-   CONSOLE SIGNATURE
-────────────────────────────────────────────── */
-console.log(
-  "%c[FETCH] by ayocodes ⚡%c  v1.0\nBackend: " +
-    BACKEND_URL +
-    "\nCtrl+K = focus input  |  Ctrl+Enter = fetch",
-  "background:#00e5ff;color:#030507;font-weight:900;font-size:13px;padding:5px 10px;border-radius:5px;",
-  "color:#7aa3b5;font-size:11px;",
-);
-
-/* ──────────────────────────────────────────────
-   LEGAL MODAL
+   legal modal — privacy policy, terms of use
 ────────────────────────────────────────────── */
 const LEGAL_CONTENT = {
   privacy: {
     tag: "// privacy",
-    title: "Privacy Policy",
-    date: "Last updated: March 2026",
-    html: `
-      <div class="legal-highlight">
-        TL;DR — FETCH does not collect, sell, or store any personal data.
-        Everything stays on your device. We have no accounts, no tracking, no ads.
-      </div>
-
-      <h3>What We Collect</h3>
-      <p>FETCH collects <strong>nothing</strong>. There are no accounts, no sign-ups, and no cookies beyond what your browser manages locally.</p>
-      <p>The only data stored on your device is:</p>
-      <ul>
-        <li>Your theme preference (dark/light) — stored in <code>localStorage</code></li>
-        <li>Your last 10 fetched URLs — stored in <code>localStorage</code> for the history feature</li>
-      </ul>
-      <p>This data never leaves your browser and is never sent to any server.</p>
-
-      <h3>URLs You Fetch</h3>
-      <p>When you fetch a URL, that URL is sent to the FETCH backend hosted on Render (<code>fetch-v1.onrender.com</code>) solely to scrape the target site on your behalf. We do not log, store, or analyse these URLs beyond serving your request.</p>
-
-      <h3>Third-Party Services</h3>
-      <p>FETCH uses the following third-party services:</p>
-      <ul>
-        <li><strong>Render.com</strong> — hosts the backend API. Subject to Render's own privacy policy.</li>
-        <li><strong>Google Fonts</strong> — loads the Syne and JetBrains Mono typefaces. Google may log font requests per their privacy policy.</li>
-        <li><strong>Cloudflare CDN</strong> — serves Font Awesome, Highlight.js and JSZip libraries.</li>
-        <li><strong>Google Analytics</strong> — anonymous usage statistics (page views, country-level data only). No personally identifiable information is collected.</li>
-      </ul>
-
-      <h3>Scraped Websites</h3>
-      <p>FETCH is a tool for inspecting publicly accessible web pages. You are responsible for ensuring your use of FETCH complies with the terms of service of any website you scrape. FETCH is not responsible for how you use the extracted code.</p>
-
-      <h3>Children's Privacy</h3>
-      <p>FETCH is not directed at children under 13. We do not knowingly collect data from minors.</p>
-
-      <h3>Changes to This Policy</h3>
-      <p>We may update this policy occasionally. Changes will be reflected by the "Last updated" date above. Continued use of FETCH after changes constitutes acceptance.</p>
-
-      <h3>Contact</h3>
-      <p>Questions? Reach out via <a href="https://github.com/Officialay12" target="_blank" rel="noopener">GitHub</a> or <a href="https://x.com/sung_tech" target="_blank" rel="noopener">X/Twitter</a>.</p>
-    `,
+    title: "privacy policy",
+    date: "last updated: march 2026",
+    html: `<div class="legal-highlight">tl;dr — fetch does not collect, sell, or store any personal data. everything stays on your device.</div>
+<h3>what we collect</h3><p>fetch collects <strong>nothing</strong>. no accounts, no cookies, no tracking.</p>
+<p>the only data stored is your theme preference and last 10 fetched urls — both in <code>localstorage</code> and never sent anywhere.</p>
+<h3>urls you fetch</h3><p>urls are sent to the fetch backend solely to scrape on your behalf. we do not log or store them.</p>
+<h3>third-party services</h3><ul><li><strong>render.com</strong> — backend hosting.</li><li><strong>google fonts</strong> — typography.</li><li><strong>cloudflare cdn</strong> — fa icons, highlight.js, jszip.</li></ul>
+<h3>contact</h3><p>questions? <a href="https://github.com/Officialay12" target="_blank">github</a> or <a href="https://x.com/sung_tech" target="_blank">x/twitter</a>.</p>`,
   },
   terms: {
     tag: "// terms",
-    title: "Terms of Use",
-    date: "Last updated: March 2026",
-    html: `
-      <div class="legal-highlight">
-        TL;DR — Use FETCH responsibly. Don't scrape sites you don't have permission
-        to access. The code you extract belongs to its original authors.
-      </div>
-
-      <h3>Acceptance of Terms</h3>
-      <p>By using FETCH ("the Service"), you agree to these Terms of Use. If you do not agree, please do not use the Service.</p>
-
-      <h3>What FETCH Does</h3>
-      <p>FETCH is a developer tool that retrieves publicly accessible web pages and extracts their HTML, CSS, and JavaScript source code for inspection and educational purposes.</p>
-
-      <h3>Permitted Use</h3>
-      <p>You may use FETCH to:</p>
-      <ul>
-        <li>Inspect the source code of public websites for educational purposes</li>
-        <li>Audit your own websites and web applications</li>
-        <li>Study front-end techniques and patterns</li>
-        <li>Diagnose rendering or performance issues on pages you own</li>
-      </ul>
-
-      <h3>Prohibited Use</h3>
-      <p>You may <strong>not</strong> use FETCH to:</p>
-      <ul>
-        <li>Scrape websites in violation of their Terms of Service or <code>robots.txt</code></li>
-        <li>Harvest personal data from websites without authorisation</li>
-        <li>Reproduce copyrighted content without the rights holder's permission</li>
-        <li>Conduct denial-of-service attacks or abuse the backend API</li>
-        <li>Attempt to bypass rate limits or security mechanisms</li>
-        <li>Use the Service for any unlawful purpose</li>
-      </ul>
-
-      <h3>Intellectual Property</h3>
-      <p>The code extracted by FETCH belongs to the original website authors, not to you or to FETCH. Extracted code may be protected by copyright. FETCH grants you no rights to that code — always check the licence of any website you inspect.</p>
-      <p>The FETCH application itself — its design, branding, and source code — is the property of ayocodes. All rights reserved.</p>
-
-      <h3>Rate Limits & Fair Use</h3>
-      <p>The FETCH API enforces rate limits (60 requests/minute globally, 12 fetch requests/minute per IP). Attempting to circumvent these limits may result in your IP being blocked without notice.</p>
-
-      <h3>No Warranty</h3>
-      <p>FETCH is provided "as is" without warranties of any kind. We do not guarantee uptime, accuracy of extracted code, or fitness for any particular purpose. The backend runs on Render's free tier and may experience cold-start delays.</p>
-
-      <h3>Limitation of Liability</h3>
-      <p>To the fullest extent permitted by law, ayocodes shall not be liable for any indirect, incidental, special, or consequential damages arising from your use of FETCH or the code you extract with it.</p>
-
-      <h3>Changes to Terms</h3>
-      <p>We reserve the right to update these Terms at any time. Continued use after changes constitutes your acceptance of the revised Terms.</p>
-
-      <h3>Contact</h3>
-      <p>Questions about these terms? Contact via <a href="https://github.com/Officialay12" target="_blank" rel="noopener">GitHub</a> or <a href="https://x.com/sung_tech" target="_blank" rel="noopener">X/Twitter</a>.</p>
-    `,
+    title: "terms of use",
+    date: "last updated: march 2026",
+    html: `<div class="legal-highlight">tl;dr — use fetch responsibly. don't scrape sites without permission. extracted code belongs to its original authors.</div>
+<h3>acceptance</h3><p>by using fetch you agree to these terms.</p>
+<h3>permitted use</h3><p>inspecting public sites for educational purposes, auditing your own sites, studying front-end techniques.</p>
+<h3>prohibited use</h3><p>violating a site's tos, harvesting personal data, reproducing copyrighted content without permission, or ddos attacks.</p>
+<h3>rate limits</h3><p>the api enforces 120 req/min globally and 30 fetch req/min per ip.</p>
+<h3>no warranty</h3><p>fetch is provided "as is" without warranties of any kind.</p>
+<h3>contact</h3><p><a href="https://github.com/Officialay12" target="_blank">github</a> or <a href="https://x.com/sung_tech" target="_blank">x/twitter</a>.</p>`,
   },
 };
 
 (function initLegalModal() {
-  const backdrop = document.getElementById("legalBackdrop");
-  const tag = document.getElementById("legalModalTag");
-  const title = document.getElementById("legalModalTitle");
-  const date = document.getElementById("legalModalDate");
-  const body = document.getElementById("legalModalBody");
-  const closeX = document.getElementById("legalModalClose");
-  const closeBtn = document.getElementById("legalModalCloseBtn");
+  const backdrop = $("legalBackdrop");
+  const tag = $("legalModalTag");
+  const title = $("legalModalTitle");
+  const date = $("legalModalDate");
+  const body = $("legalModalBody");
+  const closeX = $("legalModalClose");
+  const closeBtn = $("legalModalCloseBtn");
   if (!backdrop) return;
 
   function openModal(doc) {
     const content = LEGAL_CONTENT[doc];
     if (!content) return;
-    tag.textContent = content.tag;
-    title.textContent = content.title;
-    date.textContent = content.date;
-    body.innerHTML = content.html;
-    body.scrollTop = 0;
+    if (tag) tag.textContent = content.tag;
+    if (title) title.textContent = content.title;
+    if (date) date.textContent = content.date;
+    if (body) {
+      body.innerHTML = content.html;
+      body.scrollTop = 0;
+    }
     backdrop.classList.add("open");
     backdrop.setAttribute("aria-hidden", "false");
     document.body.style.overflow = "hidden";
@@ -1445,7 +1771,6 @@ const LEGAL_CONTENT = {
     document.body.style.overflow = "";
   }
 
-  // Footer link triggers
   document.querySelectorAll(".legal-link").forEach((link) => {
     link.addEventListener("click", (e) => {
       e.preventDefault();
@@ -1453,16 +1778,22 @@ const LEGAL_CONTENT = {
     });
   });
 
-  closeX.addEventListener("click", closeModal);
-  closeBtn.addEventListener("click", closeModal);
-
-  // Click outside to close
+  closeX?.addEventListener("click", closeModal);
+  closeBtn?.addEventListener("click", closeModal);
   backdrop.addEventListener("click", (e) => {
     if (e.target === backdrop) closeModal();
   });
-
-  // Escape key
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && backdrop.classList.contains("open")) closeModal();
   });
 })();
+
+/* ──────────────────────────────────────────────
+   console signature — just for fun
+────────────────────────────────────────────── */
+console.log(
+  "%c[fetch v2.0.0] by ayocodes ⚡%c\nbackend: %s\nctrl+k = focus url | ctrl+enter = fetch",
+  "background:#00e5ff;color:#030507;font-weight:900;font-size:13px;padding:5px 10px;border-radius:5px;",
+  "color:#7aa3b5;font-size:11px;",
+  BACKEND_URL,
+);
