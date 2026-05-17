@@ -14,7 +14,7 @@
 const BACKEND_URL =
   window.location.hostname === "localhost"
     ? "http://localhost:3001"
-    : "https://fetch-v1.onrender.com";
+    : "https://fetch-v2-cww1.onrender.com";
 
 let GOOGLE_CLIENT_ID = null;
 const HIST_KEY = "fetch-history";

@@ -6,7 +6,7 @@
 const BACKEND =
   window.location.hostname === "localhost"
     ? "http://localhost:3001"
-    : "https://fetch-v1.onrender.com";
+    : "https://fetch-v2-cww1.onrender.com";
 
 const PAGE_SIZE = 20;
 
