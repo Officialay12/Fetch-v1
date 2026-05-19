@@ -3,16 +3,10 @@
 /* ══════════════════════════════════════════════════
    CONFIG
 ══════════════════════════════════════════════════ */
-const BACKEND_URL =
+const BACKEND =
   window.location.hostname === "localhost"
     ? "http://localhost:3001"
-    : (() => {
-        const backends = [
-          "https://fetch-v2-cww1.onrender.com",
-          "https://fetch-v1.onrender.com",
-        ];
-        return backends[Math.floor(Math.random() * backends.length)];
-      })();
+    : "https://fetch-v2-cww1.onrender.com";
 
 const PAGE_SIZE = 20;
 
