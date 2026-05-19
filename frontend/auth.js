@@ -6,13 +6,7 @@
 const BACKEND_URL =
   window.location.hostname === "localhost"
     ? "http://localhost:3001"
-    : (() => {
-        const backends = [
-          "https://fetch-v2-cww1.onrender.com",
-          "https://fetch-v1.onrender.com",
-        ];
-        return backends[Math.floor(Math.random() * backends.length)];
-      })();
+    : "https://fetch-v2-cww1.onrender.com";
 
 let GOOGLE_CLIENT_ID = null;
 let googleReady = false;
@@ -62,7 +56,7 @@ function hideAlert(alertId) {
 function shake(el) {
   if (!el) return;
   el.classList.remove("shake");
-  void el.offsetWidth; // reflow
+  void el.offsetWidth;
   el.classList.add("shake");
   el.addEventListener("animationend", () => el.classList.remove("shake"), {
     once: true,
@@ -97,19 +91,15 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = 12000) {
 async function checkBackendHealth() {
   try {
     const res = await fetchWithTimeout(`${BACKEND_URL}/health`, {}, 5000);
-    if (res.ok) return; // fast — all good
-  } catch (_) {
-    // timed out or network error — likely cold-starting
-  }
+    if (res.ok) return;
+  } catch (_) {}
 
-  // Show cold-start banners
   coldStartDetected = true;
   ["coldBannerLogin", "coldBannerRegister"].forEach((id) => {
     const el = $(id);
     if (el) el.classList.add("show");
   });
 
-  // Poll until backend wakes up
   const poll = setInterval(async () => {
     try {
       const r = await fetchWithTimeout(`${BACKEND_URL}/health`, {}, 6000);
@@ -146,9 +136,7 @@ async function checkBackendHealth() {
       localStorage.removeItem("fetch_token");
       localStorage.removeItem("fetch_user");
     }
-  } catch (_) {
-    // Backend not reachable — stay on auth page, keep token
-  }
+  } catch (_) {}
 })();
 
 /* ══════════════════════════════════════════════════
@@ -196,7 +184,6 @@ function switchTab(which) {
   hideAlert("registerAlert");
 }
 
-// Expose globally for footer switch buttons
 window.switchTab = switchTab;
 
 /* ══════════════════════════════════════════════════
@@ -409,16 +396,23 @@ function initRegisterForm() {
 }
 
 /* ══════════════════════════════════════════════════
-   GOOGLE AUTH
+   GOOGLE AUTH — FIXED VERSION
 ══════════════════════════════════════════════════ */
 function initGoogleAuth() {
-  if (!GOOGLE_CLIENT_ID) return;
+  if (!GOOGLE_CLIENT_ID) {
+    console.warn("[Google] No client ID available");
+    return;
+  }
+
   const script = document.createElement("script");
   script.src = "https://accounts.google.com/gsi/client";
   script.async = true;
   script.defer = true;
   script.onload = () => {
-    if (!window.google?.accounts) return;
+    if (!window.google?.accounts) {
+      console.warn("[Google] GIS not loaded");
+      return;
+    }
     window.google.accounts.id.initialize({
       client_id: GOOGLE_CLIENT_ID,
       callback: handleGoogleCredential,
@@ -427,9 +421,10 @@ function initGoogleAuth() {
       ux_mode: "popup",
     });
     googleReady = true;
+    console.log("[Google] Auth initialized");
   };
   script.onerror = () => {
-    console.warn("[google] Failed to load GIS script");
+    console.warn("[Google] Failed to load GIS script");
     disableGoogleBtns("Google unavailable");
   };
   document.head.appendChild(script);
@@ -466,6 +461,7 @@ async function handleGoogleCredential(response) {
       throw new Error(data.error || "Google auth failed.");
     }
   } catch (err) {
+    console.error("[Google]", err);
     showToast(err.message, "error");
     document.querySelectorAll(".google-btn").forEach((btn) => {
       btn.disabled = false;
@@ -482,7 +478,6 @@ function triggerGoogleSignIn() {
   }
   window.google.accounts.id.prompt((notification) => {
     if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-      // One Tap suppressed — render button popup instead
       const container = document.createElement("div");
       container.style.cssText =
         "position:fixed;top:80px;right:20px;z-index:9999;";
@@ -516,16 +511,16 @@ function initParticles() {
   const COLORS = ["rgba(0,229,255,", "rgba(170,255,0,", "rgba(255,183,0,"];
 
   function resize() {
-    W = canvas.width = innerWidth;
-    H = canvas.height = innerHeight;
+    W = canvas.width = window.innerWidth;
+    H = canvas.height = window.innerHeight;
   }
   window.addEventListener("resize", resize);
   resize();
 
   for (let i = 0; i < 50; i++) {
     pts.push({
-      x: Math.random() * 1000,
-      y: Math.random() * 800,
+      x: Math.random() * W,
+      y: Math.random() * H,
       vx: (Math.random() - 0.5) * 0.3,
       vy: (Math.random() - 0.5) * 0.3,
       r: Math.random() * 1.2 + 0.4,
@@ -552,7 +547,7 @@ function initParticles() {
   loop();
   window.addEventListener("beforeunload", () => {
     active = false;
-    cancelAnimationFrame(rafId);
+    if (rafId) cancelAnimationFrame(rafId);
   });
 }
 

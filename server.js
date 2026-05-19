@@ -1,12 +1,6 @@
 /* ══════════════════════════════════════════════════════════════════
-   FETCH — server.js v2.0.0
+   FETCH — server.js v2.0.1 (FIXED)
    by ayocodes
-
-   does it work? yeah probably.
-   three-tier bypass, auth, deobfuscator, admin panel.
-   mongodb, jwt, google oauth, groq ai.
-
-   if it breaks, it's not my fault. (ok maybe it is)
 ═══════════════════════════════════════════════════════════════════ */
 
 "use strict";
@@ -213,10 +207,13 @@ app.use(express.urlencoded({ extended: false, limit: "10mb" }));
 app.set("trust proxy", 1);
 
 /* ══════════════════════════════════════════════
-   STATIC FILES — FINALLY
-   (so you don't have to open html files directly)
+   STATIC FILES — Serve frontend
 ══════════════════════════════════════════════ */
 
+// Serve static files from frontend directory
+app.use(express.static(path.join(__dirname, "frontend")));
+
+// HTML Routes
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "frontend", "index.html"));
 });
@@ -228,13 +225,6 @@ app.get("/auth.html", (req, res) => {
 app.get("/admin.html", (req, res) => {
   res.sendFile(path.join(__dirname, "frontend", "admin.html"));
 });
-
-app.get("/index.html", (req, res) => {
-  res.sendFile(path.join(__dirname, "frontend", "index.html"));
-});
-
-// Also update the static middleware:
-app.use(express.static(path.join(__dirname, "frontend")));
 
 /* ──────────────────────────────────────────────
    rate limiters — don't spam me
@@ -505,50 +495,43 @@ app.post("/api/auth/google", authLimiter, async (req, res) => {
   }
 
   try {
-    const { credential, token_type, profile } = req.body;
-
-    if (
-      !credential ||
-      typeof credential !== "string" ||
-      credential.length < 20
-    ) {
-      return res
-        .status(400)
-        .json({ success: false, error: "invalid google credential" });
-    }
+    const { credential, access_token, profile } = req.body;
 
     let googleId, email, name, avatar;
 
-    if (token_type === "access_token" && profile) {
+    // Handle both Google One Tap and access token flow
+    if (access_token && profile) {
+      // Access token flow
       googleId = profile.sub;
       email = (profile.email || "").toLowerCase().trim();
       name = profile.name || "";
       avatar = profile.picture || null;
+    } else if (credential) {
+      // ID token flow (One Tap)
+      const ticket = await googleClient.verifyIdToken({
+        idToken: credential,
+        audience: process.env.GOOGLE_CLIENT_ID,
+      });
+      const payload = ticket.getPayload();
+      googleId = payload.sub;
+      email = (payload.email || "").toLowerCase().trim();
+      name = payload.name || "";
+      avatar = payload.picture || null;
     } else {
-      try {
-        const ticket = await googleClient.verifyIdToken({
-          idToken: credential,
-          audience: process.env.GOOGLE_CLIENT_ID,
-        });
-        const payload = ticket.getPayload();
-        googleId = payload.sub;
-        email = (payload.email || "").toLowerCase().trim();
-        name = payload.name || "";
-        avatar = payload.picture || null;
-      } catch (verifyErr) {
-        console.warn("[google-auth] verification failed:", verifyErr.message);
-        return res
-          .status(401)
-          .json({ success: false, error: "invalid google token" });
-      }
+      return res.status(400).json({
+        success: false,
+        error: "no valid credential provided",
+      });
     }
 
-    if (!email)
+    if (!email) {
       return res
         .status(400)
         .json({ success: false, error: "no email from google" });
-    if (!googleId)
+    }
+    if (!googleId) {
       return res.status(400).json({ success: false, error: "no google id" });
+    }
 
     let user = await User.findOne({ $or: [{ googleId }, { email }] });
 
@@ -589,7 +572,9 @@ app.post("/api/auth/google", authLimiter, async (req, res) => {
     });
   } catch (err) {
     console.error("[google-auth]", err.message);
-    res.status(500).json({ success: false, error: "google auth failed" });
+    res
+      .status(500)
+      .json({ success: false, error: "google auth failed: " + err.message });
   }
 });
 

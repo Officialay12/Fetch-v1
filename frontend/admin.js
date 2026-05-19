@@ -3,7 +3,7 @@
 /* ══════════════════════════════════════════════════
    CONFIG
 ══════════════════════════════════════════════════ */
-const BACKEND =
+const BACKEND_URL =
   window.location.hostname === "localhost"
     ? "http://localhost:3001"
     : "https://fetch-v2-cww1.onrender.com";
@@ -142,7 +142,7 @@ async function apiFetch(path, options = {}) {
   const headers = { "Content-Type": "application/json", ...options.headers };
   if (adminToken) headers["Authorization"] = "Bearer " + adminToken;
 
-  const res = await fetch(BACKEND + path, { ...options, headers });
+  const res = await fetch(BACKEND_URL + path, { ...options, headers });
 
   if (res.status === 401 || res.status === 403) {
     toast("Session expired — please log in again.", "err");
@@ -179,10 +179,9 @@ async function attemptUnlock() {
   if (errEl) errEl.textContent = "";
   if (coldEl) {
     coldEl.classList.remove("loading");
-    coldMsg.textContent = "";
+    if (coldMsg) coldMsg.textContent = "";
   }
 
-  // Show cold-start hint after 5 s
   const coldTimer = setTimeout(() => {
     if (coldEl && coldMsg) {
       coldEl.classList.add("loading");
@@ -191,7 +190,7 @@ async function attemptUnlock() {
   }, 5000);
 
   try {
-    const response = await fetch(`${BACKEND}/api/admin/authenticate`, {
+    const response = await fetch(`${BACKEND_URL}/api/admin/authenticate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
@@ -200,7 +199,7 @@ async function attemptUnlock() {
     clearTimeout(coldTimer);
     if (coldEl) {
       coldEl.classList.remove("loading");
-      coldMsg.textContent = "";
+      if (coldMsg) coldMsg.textContent = "";
     }
 
     const data = await response.json();
@@ -209,14 +208,17 @@ async function attemptUnlock() {
       localStorage.setItem("fetch_admin_token", adminToken);
 
       const ls = $("lockScreen");
-      ls.style.transition = "opacity .4s ease";
-      ls.style.opacity = "0";
-      setTimeout(() => {
-        ls.style.display = "none";
-        $("app").classList.add("visible");
-        initAdmin();
-        toast("Admin access granted", "ok");
-      }, 420);
+      if (ls) {
+        ls.style.transition = "opacity .4s ease";
+        ls.style.opacity = "0";
+        setTimeout(() => {
+          if (ls) ls.style.display = "none";
+          const app = $("app");
+          if (app) app.classList.add("visible");
+          initAdmin();
+          toast("Admin access granted", "ok");
+        }, 420);
+      }
     } else {
       throw new Error(data.error || "Invalid credentials");
     }
@@ -224,7 +226,7 @@ async function attemptUnlock() {
     clearTimeout(coldTimer);
     if (coldEl) {
       coldEl.classList.remove("loading");
-      coldMsg.textContent = "";
+      if (coldMsg) coldMsg.textContent = "";
     }
 
     if (errEl) {
@@ -237,7 +239,7 @@ async function attemptUnlock() {
       btn.disabled = false;
       btn.style.background = "var(--red)";
       setTimeout(() => {
-        btn.style.background = "";
+        if (btn) btn.style.background = "";
         if (errEl) errEl.textContent = "";
       }, 3000);
     }
@@ -249,10 +251,12 @@ async function checkAdminSession() {
   if (!saved) return false;
   adminToken = saved;
   try {
-    await fetch(BACKEND + "/health"); // wake the server
-    await apiFetch("/api/admin/stats"); // verify token
-    $("lockScreen").style.display = "none";
-    $("app").classList.add("visible");
+    await fetch(BACKEND_URL + "/health");
+    await apiFetch("/api/admin/stats");
+    const ls = $("lockScreen");
+    if (ls) ls.style.display = "none";
+    const app = $("app");
+    if (app) app.classList.add("visible");
     initAdmin();
     toast("Welcome back, Admin", "ok");
     return true;
@@ -301,7 +305,7 @@ async function loadOverview() {
 
 async function loadHealth() {
   try {
-    const h = await fetch(BACKEND + "/health").then((r) => r.json());
+    const h = await fetch(BACKEND_URL + "/health").then((r) => r.json());
     const f = (id, val) => {
       const el = $(id);
       if (el) el.textContent = val;
@@ -491,24 +495,27 @@ function renderUserPage(list, pg) {
 
   const tbody = $("usersTableBody");
   if (!slice.length) {
-    tbody.innerHTML =
-      '<tr class="empty-row"><td colspan="7">No users match your filter.</td></tr>';
+    if (tbody)
+      tbody.innerHTML =
+        '<tr class="empty-row"><td colspan="7">No users match your filter.</td></tr>';
     return;
   }
-  tbody.innerHTML = slice
-    .map(
-      (u, i) => `
-    <tr>
-      <td style="color:var(--muted)">${start + i + 1}</td>
-      <td>${esc(u.name || "—")}</td>
-      <td class="email-cell">${esc(u.email)}</td>
-      <td><span class="badge ${esc(u.provider)}">${esc(u.provider)}</span></td>
-      <td>${u.lastLogin ? relTime(u.lastLogin) : "—"}</td>
-      <td>${u.createdAt ? fmtDate(u.createdAt) : "—"}</td>
-      <td><button class="act-btn" onclick="openUserModal(${JSON.stringify(JSON.stringify(u))})">view</button></td>
-    </tr>`,
-    )
-    .join("");
+  if (tbody) {
+    tbody.innerHTML = slice
+      .map(
+        (u, i) => `
+      <tr>
+        <td style="color:var(--muted)">${start + i + 1}</td>
+        <td>${esc(u.name || "—")}</td>
+        <td class="email-cell">${esc(u.email)}</td>
+        <td><span class="badge ${esc(u.provider)}">${esc(u.provider)}</span></td>
+        <td>${u.lastLogin ? relTime(u.lastLogin) : "—"}</td>
+        <td>${u.createdAt ? fmtDate(u.createdAt) : "—"}</td>
+        <td><button class="act-btn" onclick='openUserModal(${JSON.stringify(JSON.stringify(u))})'>view</button></td>
+      </tr>`,
+      )
+      .join("");
+  }
 
   const btns = $("usersPagBtns");
   if (!btns) return;
@@ -610,7 +617,9 @@ function openUserModal(jsonStr) {
       .toUpperCase() || "?"
   ).slice(0, 2);
 
-  $("modalBody").innerHTML = `
+  const modalBody = $("modalBody");
+  if (modalBody) {
+    modalBody.innerHTML = `
     <div class="detail-row">
       <div class="user-avatar">
         ${u.avatar ? `<img src="${esc(u.avatar)}" onerror="this.style.display='none'">` : ""}
@@ -640,12 +649,15 @@ function openUserModal(jsonStr) {
         <div class="detail-val">${u.lastLogin ? fmtDate(u.lastLogin) : "—"}</div>
       </div>
     </div>`;
+  }
 
-  $("userModal").classList.add("open");
+  const modal = $("userModal");
+  if (modal) modal.classList.add("open");
 }
 
 function closeModal() {
-  $("userModal").classList.remove("open");
+  const modal = $("userModal");
+  if (modal) modal.classList.remove("open");
 }
 
 /* ══════════════════════════════════════════════════
@@ -734,10 +746,15 @@ function exportData() {
 function adminLogout() {
   if (refreshTimer) clearInterval(refreshTimer);
   localStorage.removeItem("fetch_admin_token");
-  $("app").classList.remove("visible");
-  $("lockScreen").style.display = "flex";
-  $("lockScreen").style.opacity = "1";
-  $("lockPass").value = "";
+  const app = $("app");
+  if (app) app.classList.remove("visible");
+  const ls = $("lockScreen");
+  if (ls) {
+    ls.style.display = "flex";
+    ls.style.opacity = "1";
+  }
+  const lockPass = $("lockPass");
+  if (lockPass) lockPass.value = "";
   adminToken = null;
   allUsers = [];
   allFetches = [];
@@ -775,7 +792,7 @@ function initAdmin() {
     "ADMIN",
     "Console initialized — " + new Date().toLocaleTimeString(),
   );
-  addLog("info", "SYSTEM", "Backend: " + BACKEND);
+  addLog("info", "SYSTEM", "Backend: " + BACKEND_URL);
   refreshAll();
   refreshTimer = setInterval(() => {
     if (!refreshInProgress) refreshAll();
@@ -786,25 +803,52 @@ function initAdmin() {
    EVENT LISTENERS
 ══════════════════════════════════════════════════ */
 document.addEventListener("DOMContentLoaded", () => {
-  $("lockBtn")?.addEventListener("click", attemptUnlock);
-  $("lockPass")?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") attemptUnlock();
-  });
-  $("lockUser")?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") $("lockPass").focus();
-  });
+  const lockBtn = $("lockBtn");
+  if (lockBtn) lockBtn.addEventListener("click", attemptUnlock);
 
-  $("refreshBtn")?.addEventListener("click", refreshAll);
-  $("exportBtn")?.addEventListener("click", exportData);
-  $("logoutBtn")?.addEventListener("click", adminLogout);
-  $("refreshUsersBtn")?.addEventListener("click", loadUsers);
-  $("pingHealthBtn")?.addEventListener("click", loadHealth);
-  $("pauseBtn")?.addEventListener("click", togglePause);
-  $("clearLogBtn")?.addEventListener("click", clearLog);
+  const lockPass = $("lockPass");
+  if (lockPass) {
+    lockPass.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") attemptUnlock();
+    });
+  }
 
-  $("userSearch")?.addEventListener("input", filterUsers);
-  $("providerFilter")?.addEventListener("change", filterUsers);
-  $("fetchSearch")?.addEventListener("input", filterFetches);
+  const lockUser = $("lockUser");
+  if (lockUser) {
+    lockUser.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && lockPass) lockPass.focus();
+    });
+  }
+
+  const refreshBtn = $("refreshBtn");
+  if (refreshBtn) refreshBtn.addEventListener("click", refreshAll);
+
+  const exportBtn = $("exportBtn");
+  if (exportBtn) exportBtn.addEventListener("click", exportData);
+
+  const logoutBtn = $("logoutBtn");
+  if (logoutBtn) logoutBtn.addEventListener("click", adminLogout);
+
+  const refreshUsersBtn = $("refreshUsersBtn");
+  if (refreshUsersBtn) refreshUsersBtn.addEventListener("click", loadUsers);
+
+  const pingHealthBtn = $("pingHealthBtn");
+  if (pingHealthBtn) pingHealthBtn.addEventListener("click", loadHealth);
+
+  const pauseBtn = $("pauseBtn");
+  if (pauseBtn) pauseBtn.addEventListener("click", togglePause);
+
+  const clearLogBtn = $("clearLogBtn");
+  if (clearLogBtn) clearLogBtn.addEventListener("click", clearLog);
+
+  const userSearch = $("userSearch");
+  if (userSearch) userSearch.addEventListener("input", filterUsers);
+
+  const providerFilter = $("providerFilter");
+  if (providerFilter) providerFilter.addEventListener("change", filterUsers);
+
+  const fetchSearch = $("fetchSearch");
+  if (fetchSearch) fetchSearch.addEventListener("input", filterFetches);
 
   document.querySelectorAll(".nav-item").forEach((btn) => {
     btn.addEventListener("click", () => showPage(btn.dataset.page, btn));
@@ -814,7 +858,6 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.key === "Escape") closeModal();
   });
 
-  // Expose modal functions globally (called from inline onclick attrs in dynamic HTML)
   window.openUserModal = openUserModal;
   window.closeModal = closeModal;
 
