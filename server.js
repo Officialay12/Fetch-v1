@@ -153,8 +153,8 @@ let cloudflareScraper = null;
 try {
   cloudflareScraper = require("cloudflare-scraper");
   console.log("✓ tier 2 ready");
-} catch {
-  console.warn("⚠ tier 2 disabled");
+} catch (err) {
+  console.warn("⚠ tier 2 disabled:", err.message);
 }
 
 let puppeteerExtra = null;
