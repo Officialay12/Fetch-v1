@@ -12,8 +12,8 @@
 ═══════════════════════════════════════════════════════════════════ */
 
 (function () {
-  const DOWNLOAD_URL = "/downloads/fetch-extension-v1.0.0.zip";
-  const DOWNLOAD_FILENAME = "fetch-extension-v1.0.0.zip";
+  const DOWNLOAD_URL = "/downloads/fetch-extension";
+  const DOWNLOAD_FILENAME = "fetch-extension-v1";
   const DISMISS_KEY = "fetch_ext_promo_dismissed_at";
   const DISMISS_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
 
