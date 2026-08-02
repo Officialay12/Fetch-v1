@@ -1,2 +1,1920 @@
-// @ts-nocheck
-"use strict";require("dotenv").config();const REQUIRED_ENV=["MONGODB_URI","JWT_SECRET"],missingEnv=REQUIRED_ENV.filter(e=>!process.env[e]);missingEnv.length&&(console.error(`[FATAL] missing: ${missingEnv.join(", ")}`),process.exit(1)),process.env.GOOGLE_CLIENT_ID||console.warn("[WARN] google auth disabled"),process.env.GROQ_API_KEY||console.warn("[WARN] deobfuscator disabled");const express=require("express"),cors=require("cors"),helmet=require("helmet"),axios=require("axios"),cheerio=require("cheerio"),rateLimit=require("express-rate-limit"),iconv=require("iconv-lite"),crypto=require("crypto"),UserAgent=require("user-agents"),bcrypt=require("bcryptjs"),jwt=require("jsonwebtoken"),mongoose=require("mongoose"),path=require("path");let OAuth2Client,googleClient,Groq,groq;try{({OAuth2Client:OAuth2Client}=require("google-auth-library")),process.env.GOOGLE_CLIENT_ID&&(googleClient=new OAuth2Client(process.env.GOOGLE_CLIENT_ID))}catch{console.warn("[WARN] google-auth-library not installed")}try{({Groq:Groq}=require("groq-sdk")),process.env.GROQ_API_KEY&&(groq=new Groq({apiKey:process.env.GROQ_API_KEY}))}catch{console.warn("[WARN] groq-sdk not installed")}const UserSchema=new mongoose.Schema({email:{type:String,required:!0,unique:!0,lowercase:!0,trim:!0},password:{type:String,select:!1},name:{type:String,trim:!0,maxlength:80},googleId:{type:String,sparse:!0},avatar:{type:String},provider:{type:String,enum:["local","google","both"],default:"local"},lastLogin:{type:Date}},{timestamps:!0}),FetchLogSchema=new mongoose.Schema({userEmail:{type:String,required:!0,index:!0},url:{type:String,required:!0},success:{type:Boolean,default:!1},tierUsed:{type:Number},durationMs:{type:Number}},{timestamps:!0}),DeobfLogSchema=new mongoose.Schema({userEmail:{type:String,required:!0,index:!0},inputLength:{type:Number},outputLength:{type:Number},success:{type:Boolean,default:!1},model:{type:String},error:{type:String}},{timestamps:!0}),User=mongoose.model("User",UserSchema),FetchLog=mongoose.model("FetchLog",FetchLogSchema),DeobfLog=mongoose.model("DeobfLog",DeobfLogSchema);mongoose.connect(process.env.MONGODB_URI,{serverSelectionTimeoutMS:1e4,socketTimeoutMS:45e3}).then(()=>console.log("✓ mongodb connected")).catch(e=>{console.error("✗ mongodb failed:",e.message),process.exit(1)}),mongoose.connection.on("error",e=>console.error("[MongoDB]",e.message)),mongoose.connection.on("disconnected",()=>console.warn("[MongoDB] disconnected — reconnecting…"));const JWT_SECRET=process.env.JWT_SECRET,JWT_EXPIRY="30d",API_SECRET=process.env.API_SECRET||crypto.randomBytes(32).toString("hex"),ADMIN_USERNAME=(process.env.ADMIN_USERNAME||"ayocodes").toLowerCase(),ADMIN_PASSWORD_HASH=process.env.ADMIN_PASSWORD_HASH||null,ADMIN_PLAIN_PASSWORD=process.env.ADMIN_PLAIN_PASSWORD||null;ADMIN_PASSWORD_HASH||ADMIN_PLAIN_PASSWORD||console.warn("[WARN] no admin password set");const MAX_CODE_CHARS=5e4,MAX_AI_TOKENS=8e3;let cloudflareScraper=null;const tier2Ready=(async()=>{try{const e=await import("cloudflare-scraper");cloudflareScraper=e.default||e,console.log("✓ tier 2 ready")}catch(e){console.warn("⚠ tier 2 disabled:",e.message)}})();let puppeteerExtra=null;try{puppeteerExtra=require("puppeteer-extra"),puppeteerExtra.use(require("puppeteer-extra-plugin-stealth")()),console.log("✓ tier 3 ready")}catch{console.warn("⚠ tier 3 disabled")}const app=express(),PORT=parseInt(process.env.PORT||"3001",10),ALLOWED_ORIGINS=["http://localhost:3000","http://localhost:3001","http://localhost:5500","http://127.0.0.1:5500","http://localhost:8080","http://127.0.0.1:8080","http://localhost:5173","https://fetch-liart-gamma.vercel.app",process.env.FRONTEND_URL].filter(Boolean);app.use(cors({origin:(e,t)=>e?ALLOWED_ORIGINS.includes(e)||/\.onrender\.com$/.test(e)||/\.vercel\.app$/.test(e)?t(null,!0):t(new Error(`CORS: ${e} not allowed`)):t(null,!0),methods:["GET","POST","PATCH","OPTIONS"],allowedHeaders:["Content-Type","Authorization"],credentials:!0})),app.use(helmet({contentSecurityPolicy:!1,crossOriginEmbedderPolicy:!1})),app.use(express.json({limit:"10mb"})),app.use(express.urlencoded({extended:!1,limit:"10mb"})),app.set("trust proxy",1),app.use("/downloads",express.static(path.join(__dirname,"frontend","downloads"))),app.get("/sw.js",(e,t)=>{t.setHeader("Cache-Control","no-cache, no-store, must-revalidate"),t.setHeader("Service-Worker-Allowed","/"),t.sendFile(path.join(__dirname,"frontend","sw.js"))}),app.use(express.static(path.join(__dirname,"frontend"))),app.get("/",(e,t)=>{t.sendFile(path.join(__dirname,"frontend","index.html"))}),app.get("/auth.html",(e,t)=>{t.sendFile(path.join(__dirname,"frontend","auth.html"))}),app.get("/admin.html",(e,t)=>{t.sendFile(path.join(__dirname,"frontend","admin.html"))});const mkLimiter=(e,t,s)=>rateLimit({windowMs:e,max:t,standardHeaders:!0,legacyHeaders:!1,message:{success:!1,error:s}}),globalLimiter=mkLimiter(6e4,120,"slow down"),authLimiter=mkLimiter(9e5,20,"too many attempts, wait 15 min"),fetchLimiter=mkLimiter(6e4,30,"30 fetches per minute max"),deobfLimiter=mkLimiter(6e4,20,"20 deobfuscations per minute max"),adminLimiter=mkLimiter(9e5,15,"too many admin attempts");function generateToken(e,t){return jwt.sign({userId:String(e),email:t,role:"user"},JWT_SECRET,{expiresIn:"30d",algorithm:"HS256"})}function generateAdminToken(e){return jwt.sign({role:"admin",username:e,userId:"admin"},JWT_SECRET,{expiresIn:"8h",algorithm:"HS256"})}function safeUser(e){return{id:e._id,email:e.email,name:e.name||"",avatar:e.avatar||null,provider:e.provider||"local"}}function validateEmail(e){return"string"==typeof e&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim())}function validatePassword(e){return"string"==typeof e&&e.length>=6&&e.length<=128}function authenticateToken(e,t,s){const r=e.headers.authorization;if(!r?.startsWith("Bearer "))return t.status(401).json({success:!1,error:"no token provided"});jwt.verify(r.slice(7),JWT_SECRET,{algorithms:["HS256"]},(r,o)=>{if(r){const e="TokenExpiredError"===r.name?"token expired":"invalid token";return t.status(401).json({success:!1,error:e})}e.user=o,s()})}function requireAdmin(e,t,s){if(!e.user||"admin"!==e.user.role)return t.status(403).json({success:!1,error:"admin only"});s()}app.use("/api/",globalLimiter),app.get("/api/config",(e,t)=>{t.json({success:!0,googleClientId:process.env.GOOGLE_CLIENT_ID||null,version:"2.0.1",env:process.env.NODE_ENV||"development"})}),app.get("/health",(e,t)=>t.json({status:"ok",version:"2.0.1",time:(new Date).toISOString(),uptime:process.uptime(),db:1===mongoose.connection.readyState?"connected":"disconnected",tiers:{tier1_axios:!0,tier2_cloudflare_scraper:!!cloudflareScraper,tier3_puppeteer_stealth:!!puppeteerExtra}})),app.get("/api/token",(e,t)=>{const s=Date.now().toString(),r=crypto.createHmac("sha256",API_SECRET).update(`fetch:${s}`).digest("hex");t.json({success:!0,token:r,timestamp:s})}),app.get("/api/endpoints",(e,t)=>{t.json({success:!0,endpoints:["GET /","GET /health","GET /api/config","GET /api/token","GET /api/endpoints","POST /api/auth/register","POST /api/auth/login","POST /api/auth/google","GET /api/auth/verify","POST /api/auth/logout","GET /api/auth/profile","PATCH /api/auth/profile","POST /api/fetch","POST /api/deobfuscate","POST /api/admin/authenticate","GET /api/admin/stats","GET /api/admin/users","GET /api/admin/fetches","GET /api/admin/deobfuscations"],version:"2.0.1"})}),app.post("/api/auth/register",authLimiter,async(e,t)=>{try{const s=(e.body.email||"").trim().toLowerCase(),r=e.body.password||"",o=(e.body.name||"").trim().slice(0,80);if(!validateEmail(s))return t.status(400).json({success:!1,error:"invalid email"});if(!validatePassword(r))return t.status(400).json({success:!1,error:"password must be 6-128 chars"});const a=await User.findOne({email:s});if(a)return"google"!==a.provider||a.password?t.status(409).json({success:!1,error:"email already exists"}):(a.password=await bcrypt.hash(r,12),a.provider="both",o&&!a.name&&(a.name=o),a.lastLogin=new Date,await a.save(),t.json({success:!0,token:generateToken(a._id,a.email),user:safeUser(a)}));const n=await User.create({email:s,password:await bcrypt.hash(r,12),name:o||s.split("@")[0],provider:"local",lastLogin:new Date});t.status(201).json({success:!0,token:generateToken(n._id,n.email),user:safeUser(n)})}catch(e){console.error("[register]",e.message),t.status(500).json({success:!1,error:"registration failed"})}}),app.post("/api/auth/login",authLimiter,async(e,t)=>{try{const s=(e.body.email||"").trim().toLowerCase(),r=e.body.password||"";if(!validateEmail(s)||!r)return t.status(400).json({success:!1,error:"email and password required"});const o=await User.findOne({email:s}).select("+password");if(!o)return await bcrypt.compare(r,"$2b$12$invalidhashpaddinginvalidhashpadding00"),t.status(401).json({success:!1,error:"invalid credentials"});if("google"===o.provider&&!o.password||!o.password)return t.status(401).json({success:!1,error:"this account uses google sign-in"});if(!await bcrypt.compare(r,o.password))return t.status(401).json({success:!1,error:"invalid credentials"});o.lastLogin=new Date,await o.save(),t.json({success:!0,token:generateToken(o._id,o.email),user:safeUser(o)})}catch(e){console.error("[login]",e.message),t.status(500).json({success:!1,error:"login failed"})}}),app.post("/api/auth/google",authLimiter,async(e,t)=>{if(!googleClient)return t.status(503).json({success:!1,error:"google auth not configured"});try{const{credential:s,access_token:r,profile:o}=e.body;let a,n,i,c;if(r&&o)a=o.sub,n=(o.email||"").toLowerCase().trim(),i=o.name||"",c=o.picture||null;else{if(!s)return t.status(400).json({success:!1,error:"no valid credential provided"});{const e=(await googleClient.verifyIdToken({idToken:s,audience:process.env.GOOGLE_CLIENT_ID})).getPayload();a=e.sub,n=(e.email||"").toLowerCase().trim(),i=e.name||"",c=e.picture||null}}if(!n)return t.status(400).json({success:!1,error:"no email from google"});if(!a)return t.status(400).json({success:!1,error:"no google id"});let u=await User.findOne({$or:[{googleId:a},{email:n}]});if(u){let e=!1;u.googleId||(u.googleId=a,u.provider=u.password?"both":"google",e=!0),!u.avatar&&c&&(u.avatar=c,e=!0),!u.name&&i&&(u.name=i,e=!0),u.lastLogin=new Date,e?await u.save():await User.updateOne({_id:u._id},{lastLogin:new Date})}else u=await User.create({email:n,name:i||n.split("@")[0],googleId:a,avatar:c,provider:"google",lastLogin:new Date}),console.log(`[google-auth] new account: ${n}`);t.json({success:!0,token:generateToken(u._id,u.email),user:safeUser(u)})}catch(e){console.error("[google-auth]",e.message),t.status(500).json({success:!1,error:"google auth failed: "+e.message})}}),app.get("/api/auth/verify",authenticateToken,async(e,t)=>{try{if("admin"===e.user.role)return t.json({success:!0,user:{id:"admin",email:`${e.user.username}@admin`,name:e.user.username,role:"admin"}});const s=await User.findById(e.user.userId);if(!s)return t.status(404).json({success:!1,error:"user not found"});t.json({success:!0,user:safeUser(s)})}catch(e){console.error("[verify]",e.message),t.status(500).json({success:!1,error:"verification failed"})}}),app.post("/api/auth/logout",authenticateToken,(e,t)=>{t.json({success:!0,message:"logged out"})}),app.get("/api/auth/profile",authenticateToken,async(e,t)=>{try{if("admin"===e.user.role)return t.json({success:!0,user:{id:"admin",email:`${e.user.username}@admin`,name:e.user.username,role:"admin",provider:"local",avatar:null,stats:{fetches:0,deobfuscations:0}}});const s=await User.findById(e.user.userId).lean();if(!s)return t.status(404).json({success:!1,error:"user not found"});const[r,o]=await Promise.all([FetchLog.countDocuments({userEmail:s.email}),DeobfLog.countDocuments({userEmail:s.email})]);t.json({success:!0,user:{id:s._id,email:s.email,name:s.name||"",avatar:s.avatar||null,provider:s.provider||"local",createdAt:s.createdAt,lastLogin:s.lastLogin,stats:{fetches:r,deobfuscations:o}}})}catch(e){console.error("[profile]",e.message),t.status(500).json({success:!1,error:"could not load profile"})}}),app.patch("/api/auth/profile",authenticateToken,async(e,t)=>{try{if("admin"===e.user.role)return t.status(403).json({success:!1,error:"admin profile is read-only"});const s={};if(void 0!==e.body.name){const r=(e.body.name||"").trim().slice(0,80);if(!r)return t.status(400).json({success:!1,error:"name cannot be empty"});s.name=r}if(void 0!==e.body.avatar){const r=String(e.body.avatar||"");if(!/^data:image\/(png|jpe?g|webp);base64,/i.test(r))return t.status(400).json({success:!1,error:"avatar must be a png/jpg/webp image"});if(r.length>2097152)return t.status(400).json({success:!1,error:"avatar image is too large"});s.avatar=r}if(0===Object.keys(s).length)return t.status(400).json({success:!1,error:"nothing to update"});const r=await User.findByIdAndUpdate(e.user.userId,s,{new:!0}).lean();if(!r)return t.status(404).json({success:!1,error:"user not found"});t.json({success:!0,user:{name:r.name,email:r.email,avatar:r.avatar||null}})}catch(e){console.error("[profile-update]",e.message),t.status(500).json({success:!1,error:"update failed"})}}),app.post("/api/admin/authenticate",adminLimiter,async(e,t)=>{try{const{username:s,password:r}=e.body;if(!s||!r)return t.status(400).json({success:!1,error:"username and password required"});const o=s.includes("@")?s.split("@")[0].toLowerCase():s.toLowerCase();if(o!==ADMIN_USERNAME)return await bcrypt.compare(r,"$2b$10$invalidsafetyhashpadding0000000000000"),t.status(401).json({success:!1,error:"invalid credentials"});let a=!1;if(ADMIN_PASSWORD_HASH)a=await bcrypt.compare(r,ADMIN_PASSWORD_HASH);else{if(!ADMIN_PLAIN_PASSWORD)return console.error("[ADMIN] no admin password configured"),t.status(503).json({success:!1,error:"admin auth not configured"});a=r===ADMIN_PLAIN_PASSWORD,a&&console.warn("[ADMIN] using plain-text password — set ADMIN_PASSWORD_HASH for prod")}if(!a)return t.status(401).json({success:!1,error:"invalid credentials"});console.log(`[ADMIN] ✓ ${o}`),t.json({success:!0,token:generateAdminToken(o)})}catch(e){console.error("[admin-auth]",e.message),t.status(500).json({success:!1,error:"authentication failed"})}}),app.get("/api/admin/stats",authenticateToken,requireAdmin,async(e,t)=>{try{const e=new Date;e.setHours(0,0,0,0);const s=new Date(Date.now()-2592e6),[r,o,a,n,i,c,u,l,d,p,m,g,h,f]=await Promise.all([User.countDocuments(),User.countDocuments({provider:{$in:["google","both"]}}),User.countDocuments({lastLogin:{$gte:s}}),User.countDocuments({createdAt:{$gte:e}}),User.find().sort({createdAt:-1}).limit(10).lean(),User.countDocuments({provider:"local"}),User.countDocuments({provider:"google"}),User.countDocuments({provider:"both"}),FetchLog.countDocuments(),FetchLog.countDocuments({success:!0}),DeobfLog.countDocuments(),DeobfLog.countDocuments({success:!0}),FetchLog.aggregate([{$group:{_id:null,avg:{$avg:"$durationMs"}}}]),DeobfLog.distinct("userEmail")]),w=[];for(let e=6;e>=0;e--){const t=new Date;t.setDate(t.getDate()-e),t.setHours(0,0,0,0);const s=new Date(t);s.setDate(s.getDate()+1);const r=await FetchLog.countDocuments({createdAt:{$gte:t,$lt:s}});w.push({label:t.toLocaleDateString("en-US",{weekday:"short"}),count:r})}t.json({success:!0,totalUsers:r,googleUsers:o,active30:a,newToday:n,recentUsers:i,providerCounts:{local:c,google:u,both:l},totalFetches:d,failedFetches:d-p,totalDeobf:m,failedDeobf:m-g,uniqueDeobfUsers:f.length,avgFetchMs:Math.round(h[0]?.avg||0),fetchesByDay:w})}catch(e){console.error("[admin-stats]",e.message),t.status(500).json({success:!1,error:e.message})}}),app.get("/api/admin/users",authenticateToken,requireAdmin,async(e,t)=>{try{const e=await User.find().sort({createdAt:-1}).lean();t.json({success:!0,users:e})}catch(e){console.error("[admin-users]",e.message),t.status(500).json({success:!1,error:e.message})}}),app.get("/api/admin/fetches",authenticateToken,requireAdmin,async(e,t)=>{try{const[e,s,r,o]=await Promise.all([FetchLog.find().sort({createdAt:-1}).limit(200).lean(),FetchLog.countDocuments(),FetchLog.countDocuments({success:!0}),FetchLog.aggregate([{$group:{_id:null,avg:{$avg:"$durationMs"}}}])]);t.json({success:!0,fetches:e,stats:{total:s,success:r,failed:s-r,avgDuration:Math.round(o[0]?.avg||0)}})}catch(e){console.error("[admin-fetches]",e.message),t.status(500).json({success:!1,error:e.message})}}),app.get("/api/admin/deobfuscations",authenticateToken,requireAdmin,async(e,t)=>{try{const[e,s,r,o]=await Promise.all([DeobfLog.find().sort({createdAt:-1}).limit(200).lean(),DeobfLog.countDocuments(),DeobfLog.countDocuments({success:!0}),DeobfLog.distinct("userEmail")]);t.json({success:!0,deobfuscations:e,stats:{total:s,success:r,failed:s-r,uniqueUsers:o.length}})}catch(e){console.error("[admin-deobf]",e.message),t.status(500).json({success:!1,error:e.message})}}),app.post("/api/deobfuscate",authenticateToken,deobfLimiter,async(e,t)=>{if(!groq)return t.status(503).json({success:!1,error:"deobfuscator not configured"});const s=e.user.email,r=e.body.jsCode||"",o=r.length,a="llama-3.3-70b-versatile",n=async e=>{await DeobfLog.create({userEmail:s,inputLength:o,success:!1,model:a,error:e}).catch(()=>{})};if(!r||"string"!=typeof r)return t.status(400).json({success:!1,error:"no code provided"});if(r.trim().length<20)return await n("code too short"),t.status(400).json({success:!1,error:"code too short (min 20 chars)"});if(r.length>5e4)return await n(`code too large: ${r.length}`),t.status(413).json({success:!1,error:`code too large (max ${5e4.toLocaleString()} chars)`});try{console.log(`[DEOBF] ${o} chars — ${s}`);const e=`deobfuscate this javascript. rename variables, unpack strings, add comments. keep the logic exactly the same. return only the deobfuscated code with "@fetch by ayocodes" at top and bottom. no markdown.\n\ncode:\n${r}`,n=await groq.chat.completions.create({model:a,temperature:.2,max_tokens:8e3,messages:[{role:"user",content:e}]});let i=(n.choices[0]?.message?.content||"").trim();i=i.replace(/^```(?:javascript|js)?\s*/im,"").replace(/\s*```$/m,"").trim(),await DeobfLog.create({userEmail:s,inputLength:o,outputLength:i.length,success:!0,model:a}).catch(()=>{}),console.log(`[DEOBF OK] ${s} — output ${i.length} chars`),t.json({success:!0,deobfuscated:i})}catch(e){if(console.error("[DEOBF ERROR]",e.message),await n(e.message),429===e.status||e.message?.includes("rate_limit"))return t.status(429).json({success:!1,error:"rate limit reached, wait a bit"});if(413===e.status||e.message?.includes("token"))return t.status(413).json({success:!1,error:"code too large for ai"});t.status(500).json({success:!1,error:"deobfuscation failed"})}});const PRIVATE_IP_RE=/^(localhost|127\.|192\.168\.|10\.|172\.(1[6-9]|2\d|3[01])\.|0\.0\.0\.0|::1|fd[0-9a-f]{2}:)/i,BLOCKED_DOMAINS=["fetch-liart-gamma.vercel.app","fetch-v1.onrender.com",process.env.BLOCKED_DOMAIN].filter(Boolean).map(e=>e.toLowerCase().replace(/^https?:\/\//,"").replace(/\/$/,""));function getRandomUA(){try{return new UserAgent({deviceCategory:"desktop"}).toString()}catch{return"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36"}}function browserHeaders(e){return{"User-Agent":e||getRandomUA(),Accept:"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8","Accept-Language":"en-US,en;q=0.9","Accept-Encoding":"gzip, deflate, br","Cache-Control":"no-cache","Sec-Ch-Ua":'"Chromium";v="124", "Google Chrome";v="124"',"Sec-Ch-Ua-Mobile":"?0","Sec-Ch-Ua-Platform":'"Windows"',"Upgrade-Insecure-Requests":"1"}}function resolveURL(e,t){if(!t||"string"!=typeof t)return null;if(!(t=t.trim())||/^(data:|javascript:|blob:)/i.test(t))return null;try{return new URL(t,e).href}catch{return null}}function decodeBuffer(e,t=""){let s="utf-8";const r=t.match(/charset=([^\s;]+)/i);r&&(s=r[1].replace(/['"]/g,""));const o=e.toString("latin1").slice(0,5e3).match(/<meta[^>]+charset=["']?([^"'\s;>]+)/i);o?.[1]&&!s.toLowerCase().startsWith("utf")&&(s=o[1]);try{return iconv.decode(e,s)}catch{return e.toString("utf-8")}}function detectFramework(e,t){const s=(e+" "+t.join(" ")).toLowerCase();return s.includes("__next_data__")||s.includes("/_next/")?"Next.js":s.includes("__nuxt__")||s.includes("/_nuxt/")?"Nuxt.js":s.includes("__remixcontext")||s.includes("@remix-run")?"Remix":s.includes("gatsby-")||s.includes("___gatsby")?"Gatsby":s.includes("__vue__")||s.includes("createapp")?"Vue.js":s.includes("ng-version")||s.includes("angular")?"Angular":s.includes("react")||s.includes("reactdom")?"React":s.includes("wp-content")||s.includes("wp-includes")?"WordPress":"Vanilla"}const FETCH_CACHE_TTL_MS=3e5,fetchResultCache=new Map;function getCachedFetch(e){const t=fetchResultCache.get(e);return t&&t.expiresAt>Date.now()?t.data:(t&&fetchResultCache.delete(e),null)}function setCachedFetch(e,t){if(fetchResultCache.set(e,{data:t,expiresAt:Date.now()+3e5}),fetchResultCache.size>500){const e=fetchResultCache.keys().next().value;fetchResultCache.delete(e)}}const tier3Breaker={consecutiveFailures:0,openUntil:0},TIER3_TRIP_THRESHOLD=3,TIER3_COOLDOWN_MS=3e5;function tier3BreakerOpen(){return Date.now()<tier3Breaker.openUntil}function tier3RecordSuccess(){tier3Breaker.consecutiveFailures=0,tier3Breaker.openUntil=0}function tier3RecordFailure(){tier3Breaker.consecutiveFailures++,tier3Breaker.consecutiveFailures>=3&&(tier3Breaker.openUntil=Date.now()+3e5,console.warn(`[tier3 breaker] tripped after ${tier3Breaker.consecutiveFailures} failures — cooling down 300s`))}async function withRetry(e,{attempts:t=2,baseDelayMs:s=1e3}={}){let r;for(let o=1;o<=t;o++)try{return await e(o)}catch(e){r=e,o<t&&await new Promise(e=>setTimeout(e,o*s))}throw r}async function fetchTier1(e,t=2e4){const s=await axios.get(e,{timeout:t,responseType:"arraybuffer",maxRedirects:8,maxContentLength:15728640,headers:browserHeaders(),validateStatus:e=>e<500,decompress:!0});if(s.status>=400){const e=new Error(`HTTP ${s.status}`);throw e.httpStatus=s.status,e}return{html:decodeBuffer(Buffer.from(s.data),s.headers["content-type"]||""),status:s.status,tier:1}}async function fetchTier2(e,t=25e3){if(!cloudflareScraper)throw new Error("cloudflare-scraper unavailable");const s="function"==typeof cloudflareScraper?cloudflareScraper:(e,t,s)=>cloudflareScraper.get(e,t,s);return new Promise((r,o)=>{const a=setTimeout(()=>o(new Error("Tier 2 timeout")),t);s(e,{headers:browserHeaders()},(e,t,s)=>{if(clearTimeout(a),e||!s)return o(e||new Error("Empty T2 body"));const n="string"==typeof s?s:decodeBuffer(Buffer.isBuffer(s)?s:Buffer.from(s));r({html:n,status:t?.statusCode||200,tier:2})})})}async function fetchTier3(e,t=4e4){if(!puppeteerExtra)throw new Error("puppeteer-extra unavailable");let s;try{s=await puppeteerExtra.launch({headless:"new",args:["--no-sandbox","--disable-setuid-sandbox","--disable-dev-shm-usage","--disable-gpu"],defaultViewport:{width:1920,height:1080}});const r=await s.newPage();await r.setUserAgent(getRandomUA()),await r.setExtraHTTPHeaders(browserHeaders()),await r.setRequestInterception(!0),r.on("request",e=>["font","media","image"].includes(e.resourceType())?e.abort():e.continue());const o=await r.goto(e,{waitUntil:"networkidle2",timeout:t}),a=o?.status()??200;await new Promise(e=>setTimeout(e,1500));const n=await r.content();if(!n)throw new Error("Puppeteer: empty page");return{html:n,status:a,tier:3}}finally{s&&await s.close().catch(()=>{})}}async function advancedFetch(e){const t=getCachedFetch(e);if(t)return{...t,fromCache:!0};const s=[];for(let t=1;t<=3;t++)try{const t=await fetchTier1(e,2e4);return setCachedFetch(e,t),t}catch(e){if(s.push(`T1[${t}]: ${e.message}`),[403,404,451].includes(e.httpStatus))break;t<3&&await new Promise(e=>setTimeout(e,1500*t))}try{const t=await withRetry(t=>fetchTier2(e,25e3+5e3*t),{attempts:2,baseDelayMs:1200});return setCachedFetch(e,t),t}catch(e){s.push(`T2: ${e.message}`)}if(tier3BreakerOpen())s.push("T3: skipped (circuit breaker open — tier 3 failing repeatedly)");else try{const t=await withRetry(t=>fetchTier3(e,4e4+1e4*t),{attempts:2,baseDelayMs:1500});return tier3RecordSuccess(),setCachedFetch(e,t),t}catch(e){tier3RecordFailure(),s.push(`T3: ${e.message}`)}throw new Error("all tiers failed: "+s.join(" | "))}async function fetchAsset(e,t=1e4,s=2){for(let r=1;r<=s;r++)try{const s=await axios.get(e,{timeout:t,responseType:"arraybuffer",maxContentLength:5242880,headers:browserHeaders(),validateStatus:e=>e<500});if(s.status>=400)throw new Error(`HTTP ${s.status}`);return decodeBuffer(Buffer.from(s.data),s.headers["content-type"]||"")}catch(e){if(r===s)return`/* [ASSET ERROR: ${e.message}] */`;await new Promise(e=>setTimeout(e,800*r))}return"/* [ASSET FETCH FAILED] */"}function extractResources(e,t){const s=[],r=[],o=[],a=[];return e("script[src]").each((r,o)=>{const a=resolveURL(t,e(o).attr("src"));a&&s.push(a)}),e('link[rel="stylesheet"], link[type="text/css"]').each((s,o)=>{const a=resolveURL(t,e(o).attr("href"));a&&r.push(a)}),e("img").each((s,r)=>{const a=e(r).attr("src")||e(r).attr("data-src")||e(r).attr("data-lazy-src"),n=resolveURL(t,a);n&&o.push(n)}),e("title").each((t,s)=>a.push({name:"title",content:e(s).text().trim()})),e("meta").each((t,s)=>{const r=e(s).attr("name")||e(s).attr("property")||e(s).attr("http-equiv"),o=e(s).attr("content")||e(s).attr("charset");r&&o&&a.push({name:r,content:o})}),{scripts:s,stylesheets:r,images:o,meta:a}}let server;function gracefulShutdown(e){console.log(`\n[${e}] shutting down...`),server.close(async()=>{await mongoose.connection.close(!1),console.log("✓ server and db closed"),process.exit(0)}),setTimeout(()=>process.exit(1),1e4)}app.post("/api/fetch",authenticateToken,fetchLimiter,async(e,t)=>{const s=Date.now();let{url:r}=e.body;const o=e.user.email;if(!r||"string"!=typeof r)return t.status(400).json({success:!1,error:"missing url"});if(r=r.trim(),/^https?:\/\//i.test(r)||(r="https://"+r),r.length>2048)return t.status(400).json({success:!1,error:"url too long"});let a;try{a=new URL(r)}catch{return t.status(400).json({success:!1,error:"invalid url"})}const n=a.hostname.toLowerCase();if(PRIVATE_IP_RE.test(n))return t.status(403).json({success:!1,error:"no private ips"});if(BLOCKED_DOMAINS.some(e=>n===e||n.endsWith("."+e)))return t.status(403).json({success:!1,error:"domain blocked"});console.log(`[FETCH] ${r} — ${o}`);try{const{html:e,tier:a}=await advancedFetch(r),i=cheerio.load(e,{decodeEntities:!1}),c=[],u=[];i('link[rel="stylesheet"], link[type="text/css"]').each((e,t)=>{const s=resolveURL(r,i(t).attr("href"));s&&c.push(s)}),i("script[src]").each((e,t)=>{const s=resolveURL(r,i(t).attr("src"));s&&u.push(s)});const l=[],d=[];i("style").each((e,t)=>{const s=i(t).html()?.trim();s?.length>5&&l.push(s)}),i("script:not([src])").each((e,t)=>{const s=i(t).html()?.trim();s?.length>20&&d.push(s)});const[p,m]=await Promise.all([Promise.allSettled(c.slice(0,15).map(async e=>`/* SOURCE: ${e} */\n${await fetchAsset(e)}`)),Promise.allSettled(u.slice(0,15).map(async e=>`/* SOURCE: ${e} */\n${await fetchAsset(e)}`))]),g=p.filter(e=>"fulfilled"===e.status).map(e=>e.value).join("\n\n"),h=m.filter(e=>"fulfilled"===e.status).map(e=>e.value).join("\n\n"),f=[g,l.length?`/* INLINE STYLES */\n${l.join("\n\n")}`:""].filter(Boolean).join("\n\n"),w=[h,d.length?`/* INLINE SCRIPTS */\n${d.join("\n\n")}`:""].filter(Boolean).join("\n\n");i("script:not([src])").each((e,t)=>i(t).html("/* extracted — see JS tab */")),i("style").each((e,t)=>i(t).html("/* extracted — see CSS tab */"));const y=i.html(),S=extractResources(i,r),v=detectFramework(e,u),E=S.meta.find(e=>"title"===e.name)?.content||n;let D=null;i('link[rel~="icon"]').each((e,t)=>{D||(D=resolveURL(r,i(t).attr("href")))});const b=new Set,T=[...S.images.map(e=>({type:"image",url:e})),...S.stylesheets.map(e=>({type:"stylesheet",url:e})),...S.scripts.map(e=>({type:"script",url:e}))].filter(e=>!b.has(e.url)&&b.add(e.url)),_=Date.now()-s,L={htmlLines:y.split("\n").length,cssLines:f?f.split("\n").length:0,jsLines:w?w.split("\n").length:0,cssFiles:c.length,jsFiles:u.length,images:S.images.length,totalAssets:T.length,fetchTimeMs:_,tierUsed:a};await FetchLog.create({userEmail:o,url:r,success:!0,tierUsed:a,durationMs:_}).catch(()=>{}),console.log(`[FETCH OK] ${r} — ${_}ms tier${a}`),t.json({success:!0,url:r,pageTitle:E,favicon:D,framework:v,tierUsed:a,html:y,css:f||"/* No CSS found */",js:w||"/* No JS found */",meta:S.meta,assets:T.slice(0,200),stats:L})}catch(e){console.error("[FETCH ERROR]",e.code||"",e.message),await FetchLog.create({userEmail:o,url:r,success:!1,durationMs:Date.now()-s}).catch(()=>{});let a="scrape failed",n=500;const i=e.code||"";"ECONNREFUSED"===i?(a="connection refused",n=502):"ETIMEDOUT"===i||"ECONNABORTED"===i?(a="request timed out",n=504):"ENOTFOUND"===i?(a="domain not found",n=502):403===e.httpStatus?(a="site blocked (403)",n=403):404===e.httpStatus?(a="page not found",n=404):e.message?.includes("all tiers failed")&&(a="all bypass methods failed",n=502),t.status(n).json({success:!1,error:a})}}),app.use("*",(e,t)=>{t.status(404).json({success:!1,error:"endpoint not found",path:e.originalUrl,hint:"GET /api/endpoints for the list"})}),app.use((e,t,s,r)=>{if(e.message?.startsWith("CORS"))return s.status(403).json({success:!1,error:e.message});console.error("[UNHANDLED]",e.message),s.status(500).json({success:!1,error:"internal server error"})}),tier2Ready.finally(()=>{server=app.listen(PORT,"0.0.0.0",()=>{console.log(`\n⚡ FETCH BACKEND v2.0.0 → http://0.0.0.0:${PORT}`),console.log(`    mode: ${process.env.NODE_ENV||"development"}`),console.log("    tier 2: "+(cloudflareScraper?"✓":"✗")),console.log("    tier 3: "+(puppeteerExtra?"✓":"✗")),console.log("    google: "+(googleClient?"✓":"✗")),console.log("    groq: "+(groq?"✓":"✗")),console.log(`    admin: ${ADMIN_USERNAME} / ${ADMIN_PASSWORD_HASH?"hash":ADMIN_PLAIN_PASSWORD?"plain":"⚠ not set"}`),console.log(`    mongodb: ${1===mongoose.connection.readyState?"✓":"connecting…"}\n`)})}),process.on("SIGTERM",()=>gracefulShutdown("SIGTERM")),process.on("SIGINT",()=>gracefulShutdown("SIGINT")),process.on("uncaughtException",e=>{console.error("[uncaughtException]",e),gracefulShutdown("uncaughtException")}),process.on("unhandledRejection",e=>console.error("[unhandledRejection]",e));
+/* ═══════════════════════════════════════════════
+   FETCH — script.js  v2.0.0
+   by ayocodes
+
+   frontend logic. does what it says on the tin.
+   - google auth (when google doesn't break it)
+   - fetch websites (hopefully)
+   - deobfuscate js (ai does the hard work)
+   - profile panel, history, search, all that.
+═══════════════════════════════════════════════ */
+
+"use strict";
+
+const BACKEND_URL =
+  window.location.hostname === "localhost"
+    ? "http://localhost:3001"
+    : "https://fetch-v2-cww1.onrender.com";
+
+let GOOGLE_CLIENT_ID = null;
+const HIST_KEY = "fetch-history";
+
+/* ──────────────────────────────────────────────
+   auth guard — redirect if not logged in
+────────────────────────────────────────────── */
+(function authGuard() {
+  const token = localStorage.getItem("fetch_token");
+  if (!token && !window.location.pathname.includes("auth.html")) {
+    window.location.replace("auth.html");
+  }
+})();
+
+/* ──────────────────────────────────────────────
+   config — get google client id from backend
+────────────────────────────────────────────── */
+(function loadAppConfig() {
+  fetch(`${BACKEND_URL}/api/config`)
+    .then((r) => r.json())
+    .then((data) => {
+      if (data.googleClientId) GOOGLE_CLIENT_ID = data.googleClientId;
+    })
+    .catch((e) => console.warn("[config]", e.message));
+})();
+
+/* ──────────────────────────────────────────────
+   utils — boring but necessary
+────────────────────────────────────────────── */
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function escapeHtml(s) {
+  if (!s) return "";
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isValidURL(str) {
+  try {
+    const u = new URL(str);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function normalizeURL(str) {
+  str = str.trim();
+  if (!/^https?:\/\//i.test(str)) str = "https://" + str;
+  return str;
+}
+
+function getDomain(url) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
+
+function $(id) {
+  return document.getElementById(id);
+}
+
+/* ──────────────────────────────────────────────
+   preloader — fake progress bar, looks cool
+────────────────────────────────────────────── */
+(function initPreloader() {
+  const preloader = $("preloader");
+  const bar = document.querySelector(".pre-bar");
+  const pct = document.querySelector(".pre-percent");
+  if (!preloader) return;
+
+  document.body.style.overflow = "hidden";
+  let progress = 0;
+
+  const iv = setInterval(() => {
+    progress += Math.random() * 18 + 4;
+    if (progress >= 100) {
+      progress = 100;
+      clearInterval(iv);
+      setTimeout(() => {
+        preloader.classList.add("done");
+        document.body.style.overflow = "";
+        document
+          .querySelectorAll(".reveal-word")
+          .forEach((el) => el.classList.add("visible"));
+        setTimeout(startCounters, 400);
+        initScrollReveal();
+      }, 300);
+    }
+    if (bar) bar.style.width = progress + "%";
+    if (pct) pct.textContent = Math.floor(progress) + "%";
+  }, 80);
+})();
+
+/* ──────────────────────────────────────────────
+   custom cursor — only on desktop, cleanup on exit
+────────────────────────────────────────────── */
+(function initCursor() {
+  const isTouch = window.matchMedia("(pointer: coarse)").matches;
+  if (isTouch || window.matchMedia("(max-width:768px)").matches) return;
+  const dot = document.querySelector(".cursor-dot");
+  const ring = document.querySelector(".cursor-ring");
+  if (!dot || !ring) return;
+
+  let mx = 0,
+    my = 0,
+    rx = 0,
+    ry = 0;
+  let rafId = null;
+  let isActive = true;
+
+  function loop() {
+    if (!isActive) return;
+    rx += (mx - rx) * 0.14;
+    ry += (my - ry) * 0.14;
+    ring.style.left = rx + "px";
+    ring.style.top = ry + "px";
+    rafId = requestAnimationFrame(loop);
+  }
+
+  document.addEventListener("mousemove", (e) => {
+    mx = e.clientX;
+    my = e.clientY;
+    dot.style.left = mx + "px";
+    dot.style.top = my + "px";
+  });
+
+  rafId = requestAnimationFrame(loop);
+
+  document.addEventListener("mousedown", () =>
+    document.body.classList.add("cursor-click"),
+  );
+  document.addEventListener("mouseup", () =>
+    document.body.classList.remove("cursor-click"),
+  );
+
+  document.addEventListener("mouseover", (e) => {
+    if (
+      e.target.closest(
+        "a, button, input, [role='tab'], .step-card, .feature-card, .recent-item, .social-link, .toggle-wrap",
+      )
+    ) {
+      document.body.classList.add("cursor-hover");
+    }
+  });
+  document.addEventListener("mouseout", (e) => {
+    if (
+      e.target.closest(
+        "a, button, input, [role='tab'], .step-card, .feature-card, .recent-item, .social-link, .toggle-wrap",
+      )
+    ) {
+      document.body.classList.remove("cursor-hover");
+    }
+  });
+
+  window.addEventListener("beforeunload", () => {
+    isActive = false;
+    if (rafId) cancelAnimationFrame(rafId);
+  });
+})();
+
+/* ──────────────────────────────────────────────
+   navbar — mobile menu, scroll effects
+────────────────────────────────────────────── */
+(function initNavbar() {
+  const navbar = $("navbar");
+  const hamburger = $("hamburger");
+  const mobileMenu = $("mobileMenu");
+  if (!mobileMenu) return;
+
+  mobileMenu.setAttribute("aria-hidden", "true");
+  mobileMenu.style.display = "none";
+
+  window.addEventListener(
+    "scroll",
+    () => {
+      if (navbar) navbar.classList.toggle("scrolled", window.scrollY > 30);
+    },
+    { passive: true },
+  );
+
+  if (hamburger) {
+    hamburger.addEventListener("click", () => {
+      const isOpen = mobileMenu.classList.toggle("open");
+      hamburger.classList.toggle("active", isOpen);
+      hamburger.setAttribute("aria-expanded", String(isOpen));
+      mobileMenu.setAttribute("aria-hidden", String(!isOpen));
+      mobileMenu.style.display = isOpen ? "block" : "none";
+      document.body.style.overflow = isOpen ? "hidden" : "";
+    });
+  }
+
+  document.querySelectorAll(".mob-link").forEach((l) => {
+    l.addEventListener("click", () => {
+      mobileMenu.classList.remove("open");
+      hamburger?.classList.remove("active");
+      mobileMenu.setAttribute("aria-hidden", "true");
+      mobileMenu.style.display = "none";
+      document.body.style.overflow = "";
+    });
+  });
+})();
+
+/* ──────────────────────────────────────────────
+   theme — dark/light mode, saves to localstorage
+────────────────────────────────────────────── */
+(function initTheme() {
+  const btn = $("themeToggle");
+  const icon = $("themeIcon");
+  const btnMob = $("themeToggleMob");
+  const iconMob = $("themeIconMob");
+  const labelMob = $("themeToggleMobLabel");
+  const html = document.documentElement;
+  const saved = localStorage.getItem("fetch-theme") || "dark";
+
+  function applyIcons(mode) {
+    const cls = mode === "dark" ? "fa-solid fa-moon" : "fa-solid fa-sun";
+    if (icon) icon.className = cls;
+    if (iconMob) iconMob.className = cls;
+    if (labelMob)
+      labelMob.textContent = mode === "dark" ? "Dark mode" : "Light mode";
+  }
+
+  html.setAttribute("data-theme", saved);
+  applyIcons(saved);
+
+  function toggleTheme() {
+    const next = html.getAttribute("data-theme") === "dark" ? "light" : "dark";
+    html.setAttribute("data-theme", next);
+    applyIcons(next);
+    localStorage.setItem("fetch-theme", next);
+    showToast(next === "dark" ? "dark mode on" : "light mode on", "info");
+  }
+
+  btn?.addEventListener("click", toggleTheme);
+  btnMob?.addEventListener("click", toggleTheme);
+})();
+
+/* ──────────────────────────────────────────────
+   logout — clear token, back to auth page
+────────────────────────────────────────────── */
+(function initLogout() {
+  function doLogout() {
+    localStorage.removeItem("fetch_token");
+    localStorage.removeItem("fetch_user");
+    window.location.replace("/auth.html");
+  }
+  $("logoutBtn")?.addEventListener("click", doLogout);
+  $("logoutBtnMob")?.addEventListener("click", doLogout);
+})();
+
+/* ──────────────────────────────────────────────
+   canvas particles — floating dots, cleans up after itself
+────────────────────────────────────────────── */
+(function initParticles() {
+  const canvas = $("particleCanvas");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  let W, H;
+  let animationId = null;
+  let isActive = true;
+  const mouse = { x: null, y: null };
+  const particles = [];
+  const COLORS = ["rgba(0,229,255,", "rgba(170,255,0,", "rgba(255,183,0,"];
+
+  function resize() {
+    W = canvas.width = canvas.offsetWidth;
+    H = canvas.height = canvas.offsetHeight;
+  }
+
+  const ro = new ResizeObserver(resize);
+  ro.observe(canvas.parentElement || document.body);
+  resize();
+
+  class Particle {
+    reset() {
+      this.x = Math.random() * W;
+      this.y = Math.random() * H;
+      this.vx = (Math.random() - 0.5) * 0.4;
+      this.vy = (Math.random() - 0.5) * 0.4;
+      this.r = Math.random() * 1.5 + 0.5;
+      this.color = COLORS[Math.floor(Math.random() * COLORS.length)];
+      this.alpha = Math.random() * 0.5 + 0.1;
+      this.life = 0;
+      this.maxLife = Math.random() * 200 + 100;
+    }
+    constructor() {
+      this.reset();
+    }
+
+    update() {
+      this.x += this.vx;
+      this.y += this.vy;
+      this.life++;
+
+      if (mouse.x !== null) {
+        const dx = mouse.x - this.x;
+        const dy = mouse.y - this.y;
+        const d = Math.hypot(dx, dy);
+        if (d < 100) {
+          this.vx -= (dx / d) * 0.03;
+          this.vy -= (dy / d) * 0.03;
+        }
+      }
+
+      if (
+        this.life > this.maxLife ||
+        this.x < 0 ||
+        this.x > W ||
+        this.y < 0 ||
+        this.y > H
+      ) {
+        this.reset();
+      }
+    }
+
+    draw() {
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.r, 0, Math.PI * 2);
+      ctx.fillStyle = this.color + this.alpha + ")";
+      ctx.fill();
+    }
+  }
+
+  for (let i = 0; i < 80; i++) particles.push(new Particle());
+
+  function connect() {
+    for (let i = 0; i < particles.length; i++) {
+      for (let j = i + 1; j < particles.length; j++) {
+        const dx = particles[i].x - particles[j].x;
+        const dy = particles[i].y - particles[j].y;
+        const d = Math.hypot(dx, dy);
+        if (d < 120) {
+          ctx.beginPath();
+          ctx.strokeStyle = `rgba(0,229,255,${(1 - d / 120) * 0.08})`;
+          ctx.lineWidth = 0.5;
+          ctx.moveTo(particles[i].x, particles[i].y);
+          ctx.lineTo(particles[j].x, particles[j].y);
+          ctx.stroke();
+        }
+      }
+    }
+  }
+
+  canvas.addEventListener("mousemove", (e) => {
+    const r = canvas.getBoundingClientRect();
+    mouse.x = e.clientX - r.left;
+    mouse.y = e.clientY - r.top;
+  });
+  canvas.addEventListener("mouseleave", () => {
+    mouse.x = null;
+    mouse.y = null;
+  });
+
+  function loop() {
+    if (!isActive || !ctx) return;
+    ctx.clearRect(0, 0, W, H);
+    particles.forEach((p) => {
+      p.update();
+      p.draw();
+    });
+    connect();
+    animationId = requestAnimationFrame(loop);
+  }
+
+  loop();
+
+  window.addEventListener("beforeunload", () => {
+    isActive = false;
+    if (animationId) cancelAnimationFrame(animationId);
+    ro.disconnect();
+  });
+})();
+
+/* ──────────────────────────────────────────────
+   scroll reveal — fade in elements when they appear
+────────────────────────────────────────────── */
+function initScrollReveal() {
+  const io = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((e) => {
+        if (e.isIntersecting) {
+          e.target.classList.add("visible");
+          io.unobserve(e.target);
+        }
+      });
+    },
+    { threshold: 0.12, rootMargin: "0px 0px -50px 0px" },
+  );
+  document
+    .querySelectorAll(".reveal-up, .reveal-left, .reveal-right")
+    .forEach((t) => io.observe(t));
+}
+initScrollReveal();
+
+/* ──────────────────────────────────────────────
+   parallax — slow moving background glows
+────────────────────────────────────────────── */
+(function () {
+  const g1 = document.querySelector(".glow-1");
+  const g2 = document.querySelector(".glow-2");
+  window.addEventListener(
+    "scroll",
+    () => {
+      const y = window.scrollY;
+      if (g1) g1.style.transform = `translateY(${y * 0.15}px)`;
+      if (g2) g2.style.transform = `translateY(${-y * 0.1}px)`;
+    },
+    { passive: true },
+  );
+})();
+
+/* ──────────────────────────────────────────────
+   counters — animate numbers on stats
+────────────────────────────────────────────── */
+function startCounters() {
+  document.querySelectorAll(".stat-num[data-count]").forEach((el) => {
+    const target = parseInt(el.getAttribute("data-count"), 10);
+    let cur = 0;
+    const step = target / 60;
+    const iv = setInterval(() => {
+      cur += step;
+      if (cur >= target) {
+        cur = target;
+        clearInterval(iv);
+      }
+      el.textContent = Math.floor(cur).toLocaleString();
+    }, 25);
+  });
+}
+
+/* ──────────────────────────────────────────────
+   toast — small notification popup
+────────────────────────────────────────────── */
+function showToast(msg, type = "info", duration = 3200) {
+  const t = $("toast");
+  if (!t) return;
+  const icons = {
+    success: "fa-check-circle",
+    error: "fa-circle-xmark",
+    info: "fa-circle-info",
+  };
+  const icon = document.createElement("i");
+  icon.className = `fa-solid ${icons[type] || icons.info}`;
+  icon.setAttribute("aria-hidden", "true");
+  const span = document.createElement("span");
+  span.textContent = msg;
+  t.innerHTML = "";
+  t.appendChild(icon);
+  t.appendChild(span);
+  t.className = `toast ${type} show`;
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove("show"), duration);
+}
+
+/* ──────────────────────────────────────────────
+   shake — error animation for inputs
+────────────────────────────────────────────── */
+const shakeStyle = document.createElement("style");
+shakeStyle.textContent =
+  "@keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-6px)}40%,80%{transform:translateX(6px)}}";
+document.head.appendChild(shakeStyle);
+
+function shakeElement(el) {
+  if (!el) return;
+  el.style.animation = "shake 0.4s ease";
+  el.addEventListener("animationend", () => (el.style.animation = ""), {
+    once: true,
+  });
+}
+
+/* ──────────────────────────────────────────────
+   ui state — loading, error, empty, output panels
+────────────────────────────────────────────── */
+const PANELS = ["emptyState", "loadingState", "errorState", "codeOutput"];
+
+function showPanel(id) {
+  PANELS.forEach((p) => {
+    const el = $(p);
+    if (el) el.classList.toggle("hidden", p !== id);
+  });
+}
+
+function setButtonLoading(id, isLoading) {
+  const btn = $(id);
+  if (!btn) return;
+  btn.classList.toggle("loading", isLoading);
+  btn.disabled = isLoading;
+}
+
+function setStatus(type, text) {
+  const dot = $("statusDot");
+  const label = $("statusText");
+  const time = $("statusTime");
+  if (dot) dot.className = "status-dot " + type;
+  if (label) label.textContent = text;
+  if (time) time.textContent = new Date().toLocaleTimeString();
+}
+
+/* ──────────────────────────────────────────────
+   history — last 10 urls, stored locally
+────────────────────────────────────────────── */
+function getHistory() {
+  try {
+    return JSON.parse(localStorage.getItem(HIST_KEY)) || [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(url) {
+  let h = getHistory().filter((u) => u !== url);
+  h.unshift(url);
+  localStorage.setItem(HIST_KEY, JSON.stringify(h.slice(0, 10)));
+  renderHistory();
+}
+
+function renderHistory() {
+  const list = $("recentList");
+  const clearBtn = $("clearHistoryBtn");
+  const hist = getHistory();
+  if (!list) return;
+  list.innerHTML = "";
+
+  if (!hist.length) {
+    clearBtn?.classList.add("hidden");
+    return;
+  }
+  clearBtn?.classList.remove("hidden");
+
+  hist.forEach((url) => {
+    const btn = document.createElement("button");
+    btn.className = "recent-item";
+    btn.setAttribute("role", "listitem");
+    btn.setAttribute("aria-label", "re-fetch " + url);
+
+    const icon = document.createElement("i");
+    icon.className = "fa-solid fa-clock-rotate-left";
+    icon.setAttribute("aria-hidden", "true");
+
+    const span = document.createElement("span");
+    span.textContent = getDomain(url);
+
+    btn.appendChild(icon);
+    btn.appendChild(span);
+
+    btn.addEventListener("click", () => {
+      const appUrlEl = $("appUrl");
+      if (appUrlEl) appUrlEl.value = url;
+      $("demo")?.scrollIntoView({ behavior: "smooth" });
+      setTimeout(() => startFetch("app"), 600);
+    });
+
+    list.appendChild(btn);
+  });
+}
+
+$("clearHistoryBtn")?.addEventListener("click", () => {
+  localStorage.removeItem(HIST_KEY);
+  renderHistory();
+  showToast("history cleared", "info");
+});
+
+renderHistory();
+
+/* ──────────────────────────────────────────────
+   loading steps — animated steps during fetch
+────────────────────────────────────────────── */
+let _stepsAborted = false;
+
+async function animateLoadingSteps() {
+  _stepsAborted = false;
+  const steps = Array.from(document.querySelectorAll(".load-step"));
+  steps.forEach((s) => s.classList.remove("active", "done"));
+
+  for (let i = 0; i < steps.length; i++) {
+    if (_stepsAborted) return;
+    steps.forEach((s, si) => {
+      if (si === i) {
+        s.classList.add("active");
+        s.classList.remove("done");
+      } else if (si < i) {
+        s.classList.remove("active");
+        s.classList.add("done");
+      }
+    });
+    await delay(Math.random() * 450 + 320);
+  }
+  steps.forEach((s) => {
+    s.classList.add("done");
+    s.classList.remove("active");
+  });
+}
+
+/* ──────────────────────────────────────────────
+   line numbers — for code blocks
+────────────────────────────────────────────── */
+function generateLineNumbers(containerId, code) {
+  const el = $(containerId);
+  if (!el) return;
+  const n = (code || "").split("\n").length;
+  const frag = document.createDocumentFragment();
+  for (let i = 1; i <= n; i++) {
+    const div = document.createElement("div");
+    div.textContent = i;
+    frag.appendChild(div);
+  }
+  el.innerHTML = "";
+  el.appendChild(frag);
+}
+
+/* ──────────────────────────────────────────────
+   render output — takes fetch response, fills all tabs
+────────────────────────────────────────────── */
+let currentData = null;
+
+function renderOutput(data) {
+  currentData = data;
+
+  const htmlEl = $("htmlCode");
+  const cssEl = $("cssCode");
+  const jsEl = $("jsCode");
+
+  if (htmlEl) htmlEl.textContent = data.html || "";
+  if (cssEl) cssEl.textContent = data.css || "";
+  if (jsEl) jsEl.textContent = data.js || "";
+
+  if (window.hljs) {
+    [htmlEl, cssEl, jsEl].forEach((el) => {
+      if (el)
+        try {
+          window.hljs.highlightElement(el);
+        } catch (_) {}
+    });
+  }
+
+  generateLineNumbers("htmlLines", data.html || "");
+  generateLineNumbers("cssLines", data.css || "");
+  generateLineNumbers("jsLines", data.js || "");
+
+  const s = data.stats || {};
+  const countLines = (str) => (str || "").split("\n").length;
+
+  const badges = {
+    htmlBadge: (s.htmlLines || countLines(data.html)) + " ln",
+    cssBadge: (s.cssLines || countLines(data.css)) + " ln",
+    jsBadge: (s.jsLines || countLines(data.js)) + " ln",
+    metaBadge: (data.meta || []).length,
+    assetsBadge: (data.assets || []).length,
+  };
+  Object.entries(badges).forEach(([id, val]) => {
+    const el = $(id);
+    if (el) el.textContent = val;
+  });
+
+  const footerInfo = $("footerInfo");
+  if (footerInfo) {
+    footerInfo.textContent = `HTML ${s.htmlLines || 0} ln · CSS ${s.cssLines || 0} ln · JS ${s.jsLines || 0} ln · ${(data.assets || []).length} assets · ${s.fetchTimeMs || 0}ms`;
+  }
+
+  const frameworkBadge = $("frameworkBadge");
+  const frameworkName = $("frameworkName");
+  if (frameworkBadge) {
+    frameworkBadge.classList.toggle("hidden", !data.framework);
+    if (data.framework && frameworkName)
+      frameworkName.textContent = "detected: " + data.framework;
+  }
+
+  const assets = data.assets || [];
+  [
+    ["imgCount", assets.filter((a) => a.type === "image").length],
+    ["fontCount", assets.filter((a) => a.type === "font").length],
+    ["jsFileCount", assets.filter((a) => a.type === "script").length],
+    ["cssFileCount", assets.filter((a) => a.type === "stylesheet").length],
+  ].forEach(([id, val]) => {
+    const el = $(id);
+    if (el) el.textContent = val;
+  });
+
+  $("assetInfo")?.classList.remove("hidden");
+
+  if (data.pageTitle) {
+    const pageInfo = $("pageInfo");
+    const pageTitle = $("pageTitle");
+    const fav = $("pageFavicon");
+    pageInfo?.classList.remove("hidden");
+    if (pageTitle) pageTitle.textContent = data.pageTitle;
+    if (fav) {
+      if (data.favicon) {
+        fav.src = data.favicon;
+        fav.style.display = "inline";
+        fav.onerror = () => (fav.style.display = "none");
+      } else {
+        fav.style.display = "none";
+      }
+    }
+  }
+
+  const metaGrid = $("metaGrid");
+  if (metaGrid) {
+    metaGrid.innerHTML = "";
+    const metas = data.meta?.length
+      ? data.meta
+      : [{ name: "info", content: "no meta tags found" }];
+    metas.forEach(({ name, content }) => {
+      const item = document.createElement("div");
+      item.className = "meta-item";
+      const key = document.createElement("div");
+      key.className = "meta-key";
+      key.textContent = name || "";
+      const val = document.createElement("div");
+      val.className = "meta-value";
+      val.textContent = content || "";
+      item.appendChild(key);
+      item.appendChild(val);
+      metaGrid.appendChild(item);
+    });
+  }
+
+  const assetsList = $("assetsList");
+  const typeIcon = {
+    image: "fa-image",
+    stylesheet: "fa-palette",
+    script: "fa-code",
+    font: "fa-font",
+    icon: "fa-star",
+    video: "fa-video",
+    audio: "fa-music",
+    other: "fa-paperclip",
+  };
+
+  if (assetsList) {
+    assetsList.innerHTML = "";
+    if (assets.length) {
+      assets.forEach((a) => {
+        const item = document.createElement("div");
+        item.className = "asset-item";
+
+        const iconEl = document.createElement("span");
+        iconEl.className = "asset-type-icon";
+        const i = document.createElement("i");
+        i.className = `fa-solid ${typeIcon[a.type] || "fa-paperclip"}`;
+        i.setAttribute("aria-hidden", "true");
+        iconEl.appendChild(i);
+
+        const urlEl = document.createElement("span");
+        urlEl.className = "asset-url";
+        urlEl.title = a.url;
+        urlEl.textContent = a.url;
+
+        const copyBtn = document.createElement("button");
+        copyBtn.className = "asset-copy";
+        copyBtn.title = "copy url";
+        copyBtn.setAttribute("aria-label", "copy url");
+        copyBtn.innerHTML =
+          '<i class="fa-regular fa-copy" aria-hidden="true"></i>';
+        copyBtn.addEventListener("click", () => copyText(a.url));
+
+        item.appendChild(iconEl);
+        item.appendChild(urlEl);
+        item.appendChild(copyBtn);
+        assetsList.appendChild(item);
+      });
+    } else {
+      assetsList.innerHTML =
+        '<div style="padding:2rem;color:var(--text2);font-family:var(--font-mono);font-size:.875rem">no assets found.</div>';
+    }
+  }
+
+  switchTab("html");
+  showPanel("codeOutput");
+}
+
+/* ──────────────────────────────────────────────
+   standalone deobfuscator — paste js, get readable code
+────────────────────────────────────────────── */
+const EXAMPLE_OBFUSCATED = `// example of obfuscated javascript
+var _0x1234 = ['hello', 'world', 'console', 'log', 'example'];
+var _0x5678 = function(_0x9abc, _0xdef0) {
+    return _0x1234[_0x9abc] + ' ' + _0x1234[_0xdef0];
+};
+var _0xabcd = function(_0xef01) {
+    return _0x1234[_0xef01];
+};
+console[_0x1234[0x2]](_0x5678(0x0, 0x1));
+console[_0x1234[0x2]](_0xabcd(0x4));`;
+
+let isDeobfuscating = false;
+
+function updateInputStats() {
+  const ta = $("obfuscatedInput");
+  if (!ta) return;
+  const charCount = $("charCount");
+  const lineCount = $("lineCount");
+  if (charCount)
+    charCount.textContent = `${ta.value.length.toLocaleString()} characters`;
+  if (lineCount) lineCount.textContent = `${ta.value.split("\n").length} lines`;
+}
+
+function setDeobfState(state) {
+  const btn = $("deobfuscateStandaloneBtn");
+  const placeholder = $("deobfuscatePlaceholder");
+  const loading = $("deobfuscateLoading");
+  const output = $("deobfuscateOutputContent");
+
+  if (state === "idle") {
+    if (btn) {
+      btn.classList.remove("loading");
+      btn.disabled = false;
+    }
+    if (loading) loading.style.display = "none";
+    if (output) output.style.display = "none";
+    if (placeholder) placeholder.style.display = "flex";
+  } else if (state === "loading") {
+    if (btn) {
+      btn.classList.add("loading");
+      btn.disabled = true;
+    }
+    if (placeholder) placeholder.style.display = "none";
+    if (loading) loading.style.display = "flex";
+    if (output) output.style.display = "none";
+  } else if (state === "done") {
+    if (btn) {
+      btn.classList.remove("loading");
+      btn.disabled = false;
+    }
+    if (loading) loading.style.display = "none";
+    if (output) output.style.display = "block";
+    if (placeholder) placeholder.style.display = "none";
+  }
+}
+
+async function standaloneDeobfuscate() {
+  if (isDeobfuscating) {
+    showToast("deobfuscation already in progress", "info");
+    return;
+  }
+
+  const ta = $("obfuscatedInput");
+  const code = ta?.value.trim();
+
+  if (!code) {
+    showToast("paste some javascript to deobfuscate", "error");
+    return;
+  }
+  if (code.length < 20) {
+    showToast("code too short", "error");
+    return;
+  }
+
+  const token = localStorage.getItem("fetch_token");
+  if (!token) {
+    window.location.replace("/auth.html");
+    return;
+  }
+
+  isDeobfuscating = true;
+  setDeobfState("loading");
+
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/deobfuscate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ jsCode: code }),
+    });
+
+    const contentType = res.headers.get("content-type") || "";
+    if (!contentType.includes("application/json")) {
+      throw new Error(`server returned ${res.status} — unexpected response`);
+    }
+
+    const data = await res.json();
+
+    if (res.status === 401) {
+      localStorage.removeItem("fetch_token");
+      window.location.replace("/auth.html");
+      return;
+    }
+
+    if (data.success) {
+      const codeEl = $("deobfuscatedCode");
+      if (codeEl) {
+        codeEl.textContent = data.deobfuscated;
+        if (window.hljs)
+          try {
+            window.hljs.highlightElement(codeEl);
+          } catch (_) {}
+      }
+      setDeobfState("done");
+      showToast("deobfuscation complete", "success");
+    } else {
+      showToast(data.error || "deobfuscation failed", "error");
+      setDeobfState("idle");
+    }
+  } catch (err) {
+    console.error("[deobfuscate]", err);
+    showToast(
+      err.message || "network error — is the backend running?",
+      "error",
+    );
+    setDeobfState("idle");
+  } finally {
+    isDeobfuscating = false;
+  }
+}
+
+$("deobfuscateStandaloneBtn")?.addEventListener("click", standaloneDeobfuscate);
+$("loadExampleBtn")?.addEventListener("click", () => {
+  const ta = $("obfuscatedInput");
+  if (ta) {
+    ta.value = EXAMPLE_OBFUSCATED;
+    updateInputStats();
+    showToast("example loaded", "info");
+  }
+});
+$("clearInputBtn")?.addEventListener("click", () => {
+  const ta = $("obfuscatedInput");
+  if (ta) {
+    ta.value = "";
+    updateInputStats();
+    setDeobfState("idle");
+    showToast("input cleared", "info");
+  }
+});
+$("uploadFile")?.addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  if (file.size > 500000) {
+    showToast("file too large (max 500kb)", "error");
+    e.target.value = "";
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    const ta = $("obfuscatedInput");
+    if (ta) {
+      ta.value = ev.target.result;
+      updateInputStats();
+      showToast(`loaded ${file.name}`, "success");
+    }
+  };
+  reader.onerror = () => showToast("error reading file", "error");
+  reader.readAsText(file);
+  e.target.value = "";
+});
+$("copyDeobfuscatedOutputBtn")?.addEventListener("click", () => {
+  const code = $("deobfuscatedCode")?.textContent;
+  if (!code) {
+    showToast("nothing to copy", "error");
+    return;
+  }
+  copyText(code);
+});
+$("downloadDeobfuscatedBtn")?.addEventListener("click", () => {
+  const code = $("deobfuscatedCode")?.textContent;
+  if (!code) {
+    showToast("nothing to download", "error");
+    return;
+  }
+  const blob = new Blob([code], { type: "text/javascript" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `deobfuscated_${Date.now()}.js`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast("downloaded", "success");
+});
+$("obfuscatedInput")?.addEventListener("input", updateInputStats);
+updateInputStats();
+
+/* ──────────────────────────────────────────────
+   main fetch — send url to backend, show results
+────────────────────────────────────────────── */
+let _abortController = null;
+
+async function startFetch(source) {
+  const inputEl = source === "hero" ? $("heroUrl") : $("appUrl");
+  if (!inputEl) return;
+
+  const raw = inputEl.value.trim();
+  if (!raw) {
+    showToast("enter a url", "error");
+    shakeElement(source === "hero" ? $("heroInputGroup") : $("appInputGroup"));
+    return;
+  }
+
+  const url = normalizeURL(raw);
+  if (!isValidURL(url)) {
+    showToast("invalid url format", "error");
+    shakeElement(source === "hero" ? $("heroInputGroup") : $("appInputGroup"));
+    return;
+  }
+
+  [$("heroUrl"), $("appUrl")].forEach((el) => {
+    if (el) el.value = url;
+  });
+
+  if (source === "hero") {
+    $("demo")?.scrollIntoView({ behavior: "smooth" });
+    await delay(700);
+  }
+
+  if (_abortController) _abortController.abort();
+  _abortController = new AbortController();
+  _stepsAborted = false;
+
+  ["frameworkBadge", "assetInfo", "pageInfo"].forEach((id) =>
+    $(id)?.classList.add("hidden"),
+  );
+
+  setButtonLoading("heroFetchBtn", true);
+  setButtonLoading("appFetchBtn", true);
+  setStatus("running", "fetching " + getDomain(url) + "…");
+  showPanel("loadingState");
+
+  const stepsPromise = animateLoadingSteps();
+  const token = localStorage.getItem("fetch_token");
+
+  if (!token) {
+    window.location.replace("/auth.html");
+    return;
+  }
+
+  try {
+    const timeoutId = setTimeout(() => _abortController.abort(), 35000);
+
+    const resp = await fetch(`${BACKEND_URL}/api/fetch`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ url }),
+      signal: _abortController.signal,
+    });
+
+    clearTimeout(timeoutId);
+    _stepsAborted = false;
+    await stepsPromise;
+
+    if (resp.status === 401) {
+      localStorage.removeItem("fetch_token");
+      window.location.replace("/auth.html");
+      return;
+    }
+
+    if (!resp.ok) {
+      const err = await resp
+        .json()
+        .catch(() => ({ error: `server error ${resp.status}` }));
+      throw new Error(err.error || `HTTP ${resp.status}`);
+    }
+
+    const data = await resp.json();
+    if (!data.success) throw new Error(data.error || "unknown server error");
+
+    renderOutput(data);
+    saveHistory(url);
+    setStatus(
+      "success",
+      `✓ done — ${getDomain(url)} extracted in ${data.stats?.fetchTimeMs || 0}ms`,
+    );
+    showToast(`✅ ${getDomain(url)} fetched`, "success");
+  } catch (err) {
+    _stepsAborted = true;
+    await stepsPromise.catch(() => {});
+
+    if (err.name === "AbortError") {
+      showPanel("emptyState");
+      setStatus("idle", "cancelled");
+      return;
+    }
+
+    let msg = err.message || "unknown error";
+    if (/failed to fetch|networkerror/i.test(msg)) {
+      msg = "cannot reach backend — cold start? wait 30 seconds and retry";
+    }
+
+    const errorTitle = $("errorTitle");
+    const errorMsg = $("errorMsg");
+    if (errorTitle) errorTitle.textContent = "fetch failed";
+    if (errorMsg) errorMsg.textContent = msg;
+    showPanel("errorState");
+    setStatus("error", "error — " + msg.slice(0, 60));
+    showToast("❌ " + msg, "error", 5000);
+  } finally {
+    setButtonLoading("heroFetchBtn", false);
+    setButtonLoading("appFetchBtn", false);
+    _abortController = null;
+  }
+}
+
+$("retryBtn")?.addEventListener("click", () => startFetch("app"));
+
+/* ──────────────────────────────────────────────
+   tab switching — html, css, js tabs
+────────────────────────────────────────────── */
+function switchTab(tabName) {
+  document.querySelectorAll(".code-tab").forEach((tab) => {
+    const active = tab.dataset.tab === tabName;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", String(active));
+  });
+  document.querySelectorAll(".panel").forEach((p) => p.classList.add("hidden"));
+  $("panel-" + tabName)?.classList.remove("hidden");
+}
+
+document.querySelectorAll(".code-tab").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    switchTab(tab.dataset.tab);
+    const q = $("searchInput")?.value;
+    if (q && searchActive) setTimeout(() => doSearch(q), 50);
+  });
+});
+
+/* ──────────────────────────────────────────────
+   copy — clipboard with fallback
+────────────────────────────────────────────── */
+function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard
+      .writeText(text)
+      .then(() => showToast("copied", "success"))
+      .catch(() => fallbackCopy(text));
+  } else {
+    fallbackCopy(text);
+  }
+}
+
+function fallbackCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.cssText =
+    "position:fixed;opacity:0;top:0;left:0;pointer-events:none";
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    document.execCommand("copy");
+    showToast("copied", "success");
+  } catch {
+    showToast("copy failed — copy manually", "error");
+  }
+  document.body.removeChild(ta);
+}
+
+$("copyBtn")?.addEventListener("click", () => {
+  if (!currentData) {
+    showToast("nothing to copy", "error");
+    return;
+  }
+  const tab = document.querySelector(".code-tab.active")?.dataset.tab;
+  const map = {
+    html: currentData.html,
+    css: currentData.css,
+    js: currentData.js,
+  };
+  if (map[tab]) copyText(map[tab]);
+  else showToast("copy not available", "info");
+});
+
+/* ──────────────────────────────────────────────
+   download zip — bundles everything
+────────────────────────────────────────────── */
+$("downloadBtn")?.addEventListener("click", async () => {
+  if (!currentData) {
+    showToast("fetch a site first", "error");
+    return;
+  }
+  if (!window.JSZip) {
+    showToast("jszip not loaded", "error");
+    return;
+  }
+
+  const zip = new window.JSZip();
+  const domain = getDomain(currentData.url || "site");
+
+  zip.file("index.html", currentData.html || "");
+  zip.file("styles.css", currentData.css || "");
+  zip.file("main.js", currentData.js || "");
+
+  if (currentData.meta?.length) {
+    zip.file(
+      "meta.txt",
+      currentData.meta.map((m) => `${m.name}: ${m.content}`).join("\n"),
+    );
+  }
+  if (currentData.assets?.length) {
+    zip.file(
+      "assets.txt",
+      currentData.assets.map((a) => `[${a.type}] ${a.url}`).join("\n"),
+    );
+  }
+
+  zip.file(
+    "README.md",
+    `# ${currentData.pageTitle || domain}\n\nextracted by fetch v2.0.0 — ayocodes\nsource: ${currentData.url}\ndate: ${new Date().toISOString()}\nframework: ${currentData.framework || "unknown"}\n\n## files\n- index.html\n- styles.css\n- main.js\n- meta.txt\n- assets.txt\n`,
+  );
+
+  try {
+    const blob = await zip.generateAsync({
+      type: "blob",
+      compression: "DEFLATE",
+      compressionOptions: { level: 6 },
+    });
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = `fetch-${domain.replace(/\./g, "-")}.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+    showToast("zip downloaded", "success");
+  } catch (e) {
+    showToast("zip failed: " + e.message, "error");
+  }
+});
+
+/* ──────────────────────────────────────────────
+   share — native share or copy url
+────────────────────────────────────────────── */
+$("shareBtn")?.addEventListener("click", () => {
+  if (!currentData) {
+    showToast("fetch a site first", "error");
+    return;
+  }
+  if (navigator.share) {
+    navigator.share({
+      title: "fetch result",
+      text: `extracted code from ${currentData.url}`,
+      url: window.location.href,
+    });
+  } else {
+    copyText(currentData.url);
+    showToast("source url copied", "info");
+  }
+});
+
+/* ──────────────────────────────────────────────
+   word wrap — toggle for code view
+────────────────────────────────────────────── */
+let wordWrap = false;
+$("wrapBtn")?.addEventListener("click", () => {
+  wordWrap = !wordWrap;
+  document
+    .querySelectorAll(".panel pre")
+    .forEach((p) => (p.style.whiteSpace = wordWrap ? "pre-wrap" : "pre"));
+  showToast(wordWrap ? "word wrap on" : "word wrap off", "info");
+});
+
+/* ──────────────────────────────────────────────
+   search — highlight text in code tabs
+────────────────────────────────────────────── */
+let searchActive = false;
+let searchTimeout = null;
+
+$("searchBtn")?.addEventListener("click", () => {
+  const bar = $("searchBar");
+  searchActive = !searchActive;
+  bar?.classList.toggle("hidden", !searchActive);
+  if (searchActive) $("searchInput")?.focus();
+  else clearSearch();
+});
+
+$("closeSearch")?.addEventListener("click", () => {
+  $("searchBar")?.classList.add("hidden");
+  searchActive = false;
+  clearSearch();
+  const si = $("searchInput");
+  if (si) si.value = "";
+  const sc = $("searchCount");
+  if (sc) sc.textContent = "";
+});
+
+$("searchInput")?.addEventListener("input", function () {
+  clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(() => doSearch(this.value), 300);
+});
+
+function doSearch(query) {
+  const countEl = $("searchCount");
+  if (!currentData || !query.trim()) {
+    clearSearch();
+    if (countEl) countEl.textContent = "";
+    return;
+  }
+
+  const activeTab = document.querySelector(".code-tab.active")?.dataset.tab;
+  if (!["html", "css", "js"].includes(activeTab)) {
+    if (countEl) countEl.textContent = "search works on code tabs only";
+    return;
+  }
+
+  const codeEl = $(activeTab + "Code");
+  if (!codeEl) return;
+
+  const raw =
+    activeTab === "html"
+      ? currentData.html
+      : activeTab === "css"
+        ? currentData.css
+        : currentData.js;
+  if (!raw) return;
+
+  const regex = new RegExp(escapeRegex(query), "gi");
+  let count = 0;
+
+  const escaped = escapeHtml(raw);
+  const highlighted = escaped.replace(regex, (m) => {
+    count++;
+    return `<mark class="search-highlight">${m}</mark>`;
+  });
+
+  codeEl.innerHTML = highlighted;
+  if (countEl)
+    countEl.textContent = count
+      ? `${count} result${count !== 1 ? "s" : ""}`
+      : "0 results";
+
+  if (count) {
+    const firstMark = codeEl.querySelector("mark");
+    if (firstMark)
+      firstMark.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+}
+
+function clearSearch() {
+  if (!currentData) return;
+  const activeTab = document.querySelector(".code-tab.active")?.dataset.tab;
+  if (!["html", "css", "js"].includes(activeTab)) return;
+
+  const raw =
+    activeTab === "html"
+      ? currentData.html
+      : activeTab === "css"
+        ? currentData.css
+        : currentData.js;
+  const el = $(activeTab + "Code");
+  if (el) {
+    el.textContent = raw;
+    if (window.hljs)
+      try {
+        window.hljs.highlightElement(el);
+      } catch (_) {}
+    generateLineNumbers(activeTab + "Lines", raw);
+  }
+}
+
+/* ──────────────────────────────────────────────
+   fullscreen — make the app go fullscreen
+────────────────────────────────────────────── */
+$("fullscreenBtn")?.addEventListener("click", () => {
+  const shell = document.querySelector(".app-shell");
+  if (!shell) return;
+  if (!document.fullscreenElement) shell.requestFullscreen?.().catch(() => {});
+  else document.exitFullscreen?.();
+});
+
+/* ──────────────────────────────────────────────
+   profile panel — view and edit user info
+────────────────────────────────────────────── */
+(function initProfile() {
+  const btn = document.getElementById("profileBtn");
+  const panel = document.getElementById("profilePanel");
+  const overlay = document.getElementById("profileOverlay");
+  const closeB = document.getElementById("profileClose");
+  if (!btn || !panel) return;
+
+  let profileLoaded = false;
+
+  async function loadProfile() {
+    const token = localStorage.getItem("fetch_token");
+    if (!token) return;
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/auth/profile`, {
+        headers: { Authorization: "Bearer " + token },
+      });
+      const data = await res.json();
+      if (!data.success) return;
+
+      const u = data.user;
+
+      const initials = (
+        (u.name || u.email || "?")
+          .split(" ")
+          .map((w) => w[0])
+          .join("")
+          .toUpperCase() || "?"
+      ).slice(0, 2);
+      const avatarEl = document.getElementById("profileAvatar");
+      const avatarEditOverlay = `<span class="profile-avatar-edit"><i class="fa-solid fa-camera"></i></span>`;
+      if (avatarEl) {
+        if (u.avatar) {
+          avatarEl.innerHTML = `<img src="${u.avatar}" alt="${initials}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" style="width:100%;height:100%;object-fit:cover;border-radius:50%"><span class="profile-initials" style="display:none">${initials}</span>${avatarEditOverlay}`;
+        } else {
+          avatarEl.innerHTML = `<span class="profile-initials">${initials}</span>${avatarEditOverlay}`;
+        }
+      }
+
+      const navAvatar = document.getElementById("profileBtnAvatar");
+      if (navAvatar) {
+        if (u.avatar) {
+          navAvatar.innerHTML = `<img src="${u.avatar}" alt="${initials}" onerror="this.innerHTML='${initials}'" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`;
+        } else {
+          navAvatar.textContent = initials;
+        }
+      }
+
+      const mobAvatar = document.getElementById("mobProfileAvatar");
+      if (mobAvatar) {
+        if (u.avatar) {
+          mobAvatar.innerHTML = `<img src="${u.avatar}" alt="${initials}" onerror="this.innerHTML='${initials}'" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`;
+        } else {
+          mobAvatar.textContent = initials;
+        }
+      }
+      const mobName = document.getElementById("mobProfileName");
+      if (mobName) mobName.textContent = u.name || "Your account";
+      const mobEmail = document.getElementById("mobProfileEmail");
+      if (mobEmail) mobEmail.textContent = u.email || "—";
+
+      const fields = {
+        profileName: u.name || "—",
+        profileEmail: u.email || "—",
+        profileProvider: u.provider || "local",
+        profileJoined: u.createdAt
+          ? new Date(u.createdAt).toLocaleDateString("en-GB", {
+              day: "2-digit",
+              month: "short",
+              year: "numeric",
+            })
+          : "—",
+        profileLastLogin: u.lastLogin
+          ? new Date(u.lastLogin).toLocaleDateString("en-GB", {
+              day: "2-digit",
+              month: "short",
+              year: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : "—",
+        profileFetches: (u.stats?.fetches ?? "—").toString(),
+        profileDeobf: (u.stats?.deobfuscations ?? "—").toString(),
+      };
+      Object.entries(fields).forEach(([id, val]) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = val;
+      });
+
+      const badge = document.getElementById("profileProviderBadge");
+      if (badge) {
+        badge.textContent = u.provider;
+        badge.className = `profile-badge provider-${u.provider}`;
+      }
+
+      const nameInput = document.getElementById("profileNameInput");
+      if (nameInput) nameInput.value = u.name || "";
+
+      profileLoaded = true;
+    } catch (e) {
+      console.warn("[profile]", e.message);
+    }
+  }
+
+  function openPanel() {
+    panel.classList.add("open");
+    overlay?.classList.add("open");
+    document.body.style.overflow = "hidden";
+    if (!profileLoaded) loadProfile();
+    // also close the mobile menu, if it's open, so panels don't stack
+    const mobileMenu = document.getElementById("mobileMenu");
+    const hamburger = document.getElementById("hamburger");
+    if (mobileMenu?.classList.contains("open")) {
+      mobileMenu.classList.remove("open");
+      hamburger?.classList.remove("active");
+      mobileMenu.setAttribute("aria-hidden", "true");
+    }
+  }
+
+  function closePanel() {
+    panel.classList.remove("open");
+    overlay?.classList.remove("open");
+    document.body.style.overflow = "";
+  }
+
+  btn.addEventListener("click", openPanel);
+  closeB?.addEventListener("click", closePanel);
+  overlay?.addEventListener("click", closePanel);
+  document
+    .getElementById("mobProfileCard")
+    ?.addEventListener("click", openPanel);
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && panel.classList.contains("open")) closePanel();
+  });
+
+  // Load the profile as soon as we know the user is signed in, so the
+  // navbar/mobile-menu avatar shows the real photo/initials right away
+  // instead of sitting on the "?" placeholder until the panel is opened.
+  if (localStorage.getItem("fetch_token")) loadProfile();
+
+  const saveNameBtn = document.getElementById("profileSaveName");
+  saveNameBtn?.addEventListener("click", async () => {
+    const nameInput = document.getElementById("profileNameInput");
+    const name = nameInput?.value.trim();
+    if (!name) return;
+    const token = localStorage.getItem("fetch_token");
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/auth/profile`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + token,
+        },
+        body: JSON.stringify({ name }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        const stored = JSON.parse(localStorage.getItem("fetch_user") || "{}");
+        stored.name = name;
+        localStorage.setItem("fetch_user", JSON.stringify(stored));
+        profileLoaded = false;
+        loadProfile();
+        showToast("name updated", "success");
+      } else {
+        showToast(data.error || "update failed", "error");
+      }
+    } catch {
+      showToast("could not save", "error");
+    }
+  });
+
+  /* ── avatar upload — click the avatar, pick a photo, resize + save ── */
+  const avatarBtn = document.getElementById("profileAvatar");
+  const avatarInput = document.getElementById("profileAvatarInput");
+
+  function resizeImageFile(file, maxSize = 256, quality = 0.85) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("could not read file"));
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error("could not read image"));
+        img.onload = () => {
+          const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+          const w = Math.max(1, Math.round(img.width * scale));
+          const h = Math.max(1, Math.round(img.height * scale));
+          const canvas = document.createElement("canvas");
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL("image/jpeg", quality));
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  avatarBtn?.addEventListener("click", () => avatarInput?.click());
+
+  avatarInput?.addEventListener("change", async () => {
+    const file = avatarInput.files?.[0];
+    avatarInput.value = "";
+    if (!file) return;
+
+    if (!/^image\/(png|jpe?g|webp)$/i.test(file.type)) {
+      showToast("use a png, jpg, or webp image", "error");
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      showToast("image is too large (max 8MB)", "error");
+      return;
+    }
+
+    const token = localStorage.getItem("fetch_token");
+    if (!token) return;
+
+    avatarBtn.classList.add("uploading");
+    try {
+      const dataUrl = await resizeImageFile(file);
+      const res = await fetch(`${BACKEND_URL}/api/auth/profile`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + token,
+        },
+        body: JSON.stringify({ avatar: dataUrl }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        const stored = JSON.parse(localStorage.getItem("fetch_user") || "{}");
+        stored.avatar = dataUrl;
+        localStorage.setItem("fetch_user", JSON.stringify(stored));
+        profileLoaded = false;
+        await loadProfile();
+        showToast("profile photo updated", "success");
+      } else {
+        showToast(data.error || "could not update photo", "error");
+      }
+    } catch (e) {
+      showToast(e.message || "could not update photo", "error");
+    } finally {
+      avatarBtn.classList.remove("uploading");
+    }
+  });
+})();
+
+/* ──────────────────────────────────────────────
+   url input wiring — sync hero and app inputs
+────────────────────────────────────────────── */
+const heroFetchBtn = $("heroFetchBtn");
+const heroUrlInput = $("heroUrl");
+const appFetchBtn = $("appFetchBtn");
+const appUrlInput = $("appUrl");
+
+heroFetchBtn?.addEventListener("click", () => startFetch("hero"));
+appFetchBtn?.addEventListener("click", () => startFetch("app"));
+heroUrlInput?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") startFetch("hero");
+});
+appUrlInput?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") startFetch("app");
+});
+
+if (heroUrlInput && appUrlInput) {
+  heroUrlInput.addEventListener("input", function () {
+    appUrlInput.value = this.value;
+  });
+  appUrlInput.addEventListener("input", function () {
+    heroUrlInput.value = this.value;
+  });
+}
+
+/* ──────────────────────────────────────────────
+   magnetic buttons — fun hover effect
+────────────────────────────────────────────── */
+document
+  .querySelectorAll(
+    ".btn-primary:not(.btn-loading), .app-fetch-btn, .deobfuscate-standalone-btn",
+  )
+  .forEach((btn) => {
+    btn.addEventListener("mousemove", function (e) {
+      if (this.disabled) return;
+      const r = this.getBoundingClientRect();
+      const dx = (e.clientX - (r.left + r.width / 2)) * 0.2;
+      const dy = (e.clientY - (r.top + r.height / 2)) * 0.2;
+      this.style.transform = `translate(${dx}px, ${dy}px)`;
+    });
+    btn.addEventListener("mouseleave", function () {
+      this.style.transition = "transform .4s cubic-bezier(.16,1,.3,1)";
+      this.style.transform = "";
+    });
+    btn.addEventListener("mouseenter", function () {
+      this.style.transition = "transform .1s ease";
+    });
+  });
+
+/* ──────────────────────────────────────────────
+   active nav on scroll — highlight current section
+────────────────────────────────────────────── */
+(function () {
+  const sections = document.querySelectorAll("section[id]");
+  const links = document.querySelectorAll(".nav-link");
+  window.addEventListener(
+    "scroll",
+    () => {
+      let cur = "";
+      sections.forEach((s) => {
+        if (window.scrollY >= s.offsetTop - 120) cur = s.id;
+      });
+      links.forEach((l) => {
+        l.style.color =
+          l.getAttribute("href") === "#" + cur ? "var(--cyan)" : "";
+      });
+    },
+    { passive: true },
+  );
+})();
+
+/* ──────────────────────────────────────────────
+   keyboard shortcuts — ctrl+k focus url, ctrl+enter fetch
+────────────────────────────────────────────── */
+document.addEventListener("keydown", (e) => {
+  const mod = e.ctrlKey || e.metaKey;
+
+  if (mod && e.key === "k") {
+    e.preventDefault();
+    $("appUrl")?.focus();
+    $("demo")?.scrollIntoView({ behavior: "smooth" });
+  }
+
+  if (mod && e.key === "Enter") startFetch("app");
+
+  if (e.key === "Escape") {
+    const mm = $("mobileMenu");
+    if (mm?.classList.contains("open")) {
+      mm.classList.remove("open");
+      $("hamburger")?.classList.remove("active");
+      mm.setAttribute("aria-hidden", "true");
+      mm.style.display = "none";
+      document.body.style.overflow = "";
+    }
+    if (searchActive) $("closeSearch")?.click();
+  }
+});
+
+/* ──────────────────────────────────────────────
+   terminal typewriter — fake terminal animation
+────────────────────────────────────────────── */
+(function initTerminal() {
+  const cmd = $("termCmd");
+  const out = $("termOutput");
+  if (!cmd || !out) return;
+
+  const seqs = [
+    {
+      command: "node server.js",
+      lines: [
+        { text: "⚡ fetch backend running on :10000", cls: "t-green", d: 500 },
+        { text: "   health: /health ✓", cls: "t-muted", d: 800 },
+        { text: "", cls: "", d: 1100 },
+        { text: "post /api/fetch  200  1247ms", cls: "t-cyan", d: 1600 },
+        { text: "→ github.com — react 18 detected", cls: "t-muted", d: 1900 },
+        { text: "→ 412 ln html · 891 ln css", cls: "t-muted", d: 2200 },
+        { text: "✓ extraction complete", cls: "t-green", d: 2600 },
+      ],
+    },
+    {
+      command: 'curl /api/fetch -d \'{"url":"stripe.com"}\'',
+      lines: [
+        { text: "→ connecting to stripe.com…", cls: "t-muted", d: 400 },
+        { text: "→ parsing 2,891 dom elements…", cls: "t-muted", d: 800 },
+        { text: "→ fetching 4 stylesheets…", cls: "t-muted", d: 1200 },
+        { text: "→ fetching 7 js bundles…", cls: "t-muted", d: 1600 },
+        { text: "✓ framework: next.js 14", cls: "t-cyan", d: 2000 },
+        { text: "✓ 1,247 ln css · 892 ln js", cls: "t-green", d: 2300 },
+        { text: "✓ done in 1.87s ⚡", cls: "t-amber", d: 2600 },
+      ],
+    },
+  ];
+
+  let si = 0;
+  let running = false;
+
+  async function run() {
+    if (running) return;
+    running = true;
+    const s = seqs[si % seqs.length];
+    cmd.textContent = "";
+    out.innerHTML = "";
+
+    for (let i = 0; i <= s.command.length; i++) {
+      cmd.textContent = s.command.slice(0, i);
+      await delay(35 + Math.random() * 20);
+    }
+
+    for (let i = 0; i < s.lines.length; i++) {
+      const l = s.lines[i];
+      const prev = s.lines[i - 1];
+      await delay(l.d - (prev?.d || 0));
+
+      if (!l.text) {
+        out.appendChild(document.createElement("br"));
+        continue;
+      }
+
+      const d = document.createElement("div");
+      d.className = "t-line " + l.cls;
+      d.textContent = l.text;
+      out.appendChild(d);
+      requestAnimationFrame(() => d.classList.add("show"));
+    }
+
+    await delay(4000);
+    si++;
+    out.style.transition = "opacity .5s";
+    out.style.opacity = "0";
+    await delay(500);
+    out.style.opacity = "1";
+    running = false;
+    run();
+  }
+
+  const io = new IntersectionObserver(
+    (entries) => {
+      if (entries[0].isIntersecting) {
+        run();
+        io.disconnect();
+      }
+    },
+    { threshold: 0.3 },
+  );
+
+  const tc = document.querySelector(".terminal-card");
+  if (tc) io.observe(tc);
+  else run();
+})();
+
+/* ──────────────────────────────────────────────
+   legal modal — privacy policy, terms of use
+────────────────────────────────────────────── */
+const LEGAL_CONTENT = {
+  privacy: {
+    tag: "// privacy",
+    title: "privacy policy",
+    date: "last updated: march 2026",
+    html: `<div class="legal-highlight">tl;dr — fetch does not collect, sell, or store any personal data. everything stays on your device.</div>
+<h3>what we collect</h3><p>fetch collects <strong>nothing</strong>. no accounts, no cookies, no tracking.</p>
+<p>the only data stored is your theme preference and last 10 fetched urls — both in <code>localstorage</code> and never sent anywhere.</p>
+<h3>urls you fetch</h3><p>urls are sent to the fetch backend solely to scrape on your behalf. we do not log or store them.</p>
+<h3>third-party services</h3><ul><li><strong>render.com</strong> — backend hosting.</li><li><strong>google fonts</strong> — typography.</li><li><strong>cloudflare cdn</strong> — fa icons, highlight.js, jszip.</li></ul>
+<h3>contact</h3><p>questions? <a href="https://github.com/Officialay12" target="_blank">github</a> or <a href="https://x.com/sung_tech" target="_blank">x/twitter</a>.</p>`,
+  },
+  terms: {
+    tag: "// terms",
+    title: "terms of use",
+    date: "last updated: march 2026",
+    html: `<div class="legal-highlight">tl;dr — use fetch responsibly. don't scrape sites without permission. extracted code belongs to its original authors.</div>
+<h3>acceptance</h3><p>by using fetch you agree to these terms.</p>
+<h3>permitted use</h3><p>inspecting public sites for educational purposes, auditing your own sites, studying front-end techniques.</p>
+<h3>prohibited use</h3><p>violating a site's tos, harvesting personal data, reproducing copyrighted content without permission, or ddos attacks.</p>
+<h3>rate limits</h3><p>the api enforces 120 req/min globally and 30 fetch req/min per ip.</p>
+<h3>no warranty</h3><p>fetch is provided "as is" without warranties of any kind.</p>
+<h3>contact</h3><p><a href="https://github.com/Officialay12" target="_blank">github</a> or <a href="https://x.com/sung_tech" target="_blank">x/twitter</a>.</p>`,
+  },
+};
+
+(function initLegalModal() {
+  const backdrop = $("legalBackdrop");
+  const tag = $("legalModalTag");
+  const title = $("legalModalTitle");
+  const date = $("legalModalDate");
+  const body = $("legalModalBody");
+  const closeX = $("legalModalClose");
+  const closeBtn = $("legalModalCloseBtn");
+  if (!backdrop) return;
+
+  function openModal(doc) {
+    const content = LEGAL_CONTENT[doc];
+    if (!content) return;
+    if (tag) tag.textContent = content.tag;
+    if (title) title.textContent = content.title;
+    if (date) date.textContent = content.date;
+    if (body) {
+      body.innerHTML = content.html;
+      body.scrollTop = 0;
+    }
+    backdrop.classList.add("open");
+    backdrop.setAttribute("aria-hidden", "false");
+    document.body.style.overflow = "hidden";
+  }
+
+  function closeModal() {
+    backdrop.classList.remove("open");
+    backdrop.setAttribute("aria-hidden", "true");
+    document.body.style.overflow = "";
+  }
+
+  document.querySelectorAll(".legal-link").forEach((link) => {
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      openModal(link.dataset.doc);
+    });
+  });
+
+  closeX?.addEventListener("click", closeModal);
+  closeBtn?.addEventListener("click", closeModal);
+  backdrop.addEventListener("click", (e) => {
+    if (e.target === backdrop) closeModal();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && backdrop.classList.contains("open")) closeModal();
+  });
+})();
+
+/* ──────────────────────────────────────────────
+   console signature — just for fun
+────────────────────────────────────────────── */
+console.log(
+  "%c[fetch v2.0.0] by ayocodes ⚡%c\nbackend: %s\nctrl+k = focus url | ctrl+enter = fetch",
+  "background:#00e5ff;color:#030507;font-weight:900;font-size:13px;padding:5px 10px;border-radius:5px;",
+  "color:#7aa3b5;font-size:11px;",
+  BACKEND_URL,
+);
