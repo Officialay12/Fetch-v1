@@ -80,7 +80,7 @@
                 <li><a href="#about" class="nav-link">About</a></li>
             </ul>
             <div class="nav-actions">
-                <button id="pwaInstallBtn" class="theme-btn" aria-label="Install FETCH app" title="Install FETCH"
+                <button id="pwaInstallBtn" class="theme-btn nav-desktop-only" aria-label="Install FETCH app" title="Install FETCH"
                     style="display:none;">
                     <i class="fa-solid fa-download"></i>
                 </button>
@@ -90,7 +90,7 @@
                 <button id="profileBtn" class="profile-nav-btn" aria-label="Your profile">
                     <div class="profile-nav-avatar" id="profileBtnAvatar">?</div>
                 </button>
-                <button id="logoutBtn" class="logout-btn" aria-label="Logout" title="Logout">
+                <button id="logoutBtn" class="logout-btn nav-desktop-only" aria-label="Logout" title="Logout">
                     <i class="fa-solid fa-sign-out-alt"></i>
                 </button>
                 <a href="#demo" class="btn-primary nav-cta">
@@ -103,23 +103,39 @@
         </div>
         <!-- MOBILE MENU -->
         <div class="mobile-menu" id="mobileMenu" role="dialog" aria-label="Mobile navigation" aria-hidden="true">
+            <div class="mob-profile-card" id="mobProfileCard">
+                <div class="profile-nav-avatar mob-profile-avatar" id="mobProfileAvatar">?</div>
+                <div class="mob-profile-info">
+                    <div class="mob-profile-name" id="mobProfileName">Loading...</div>
+                    <div class="mob-profile-email" id="mobProfileEmail">—</div>
+                </div>
+                <i class="fa-solid fa-chevron-right mob-profile-arrow" aria-hidden="true"></i>
+            </div>
             <ul role="list">
                 <li id="pwaInstallMobWrap" style="display:none;">
                     <a href="#" id="pwaInstallMobBtn" class="mob-link">
                         <i class="fa-solid fa-download"></i> Install App
                     </a>
                 </li>
-                <li><a href="#how-it-works" class="mob-link">How It Works</a></li>
-                <li><a href="#deobfuscator" class="mob-link">Deobfuscator</a></li>
-                <li><a href="#demo" class="mob-link">Scraper</a></li>
-                <li><a href="#features" class="mob-link">Features</a></li>
-                <li><a href="#about" class="mob-link">About</a></li>
+                <li><a href="#how-it-works" class="mob-link"><i class="fa-solid fa-diagram-project"></i> How It Works</a></li>
+                <li><a href="#deobfuscator" class="mob-link"><i class="fa-solid fa-wand-magic-sparkles"></i> Deobfuscator</a></li>
+                <li><a href="#demo" class="mob-link"><i class="fa-solid fa-globe"></i> Scraper</a></li>
+                <li><a href="#features" class="mob-link"><i class="fa-solid fa-layer-group"></i> Features</a></li>
+                <li><a href="#about" class="mob-link"><i class="fa-solid fa-circle-info"></i> About</a></li>
                 <li>
                     <a href="#demo" class="mob-link mob-cta">
                         <i class="fa-solid fa-bolt"></i> Launch App
                     </a>
                 </li>
             </ul>
+            <div class="mob-menu-footer">
+                <button id="themeToggleMob" class="mob-util-btn" aria-label="Toggle theme">
+                    <i class="fa-solid fa-moon" id="themeIconMob"></i> <span id="themeToggleMobLabel">Dark mode</span>
+                </button>
+                <button id="logoutBtnMob" class="mob-util-btn mob-util-danger" aria-label="Logout">
+                    <i class="fa-solid fa-sign-out-alt"></i> Sign out
+                </button>
+            </div>
         </div>
     </nav>
 
@@ -134,9 +150,11 @@
                 </button>
             </div>
             <div class="profile-hero">
-                <div class="profile-avatar" id="profileAvatar">
+                <button type="button" class="profile-avatar" id="profileAvatar" aria-label="Change profile photo">
                     <span class="profile-initials">?</span>
-                </div>
+                    <span class="profile-avatar-edit"><i class="fa-solid fa-camera"></i></span>
+                </button>
+                <input type="file" id="profileAvatarInput" accept="image/png,image/jpeg,image/webp" hidden>
                 <div class="profile-hero-info">
                     <div class="profile-name" id="profileName">Loading...</div>
                     <div class="profile-email" id="profileEmail">—</div>
