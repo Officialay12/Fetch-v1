@@ -150,12 +150,19 @@ const MAX_AI_TOKENS = 8_000;
    scraper tiers — if they're installed
 ────────────────────────────────────────────── */
 let cloudflareScraper = null;
-try {
-  cloudflareScraper = require("cloudflare-scraper");
-  console.log("✓ tier 2 ready");
-} catch (err) {
-  console.warn("⚠ tier 2 disabled:", err.message);
-}
+// cloudflare-scraper ships as an ES Module — CommonJS require() can't load it
+// directly (Node throws ERR_REQUIRE_ESM). Dynamic import() works from CJS
+// and returns a Promise, so we resolve it once at boot and gate server
+// startup on it below (see tier2Ready + app.listen).
+const tier2Ready = (async () => {
+  try {
+    const mod = await import("cloudflare-scraper");
+    cloudflareScraper = mod.default || mod;
+    console.log("✓ tier 2 ready");
+  } catch (err) {
+    console.warn("⚠ tier 2 disabled:", err.message);
+  }
+})();
 
 let puppeteerExtra = null;
 try {
@@ -1564,19 +1571,22 @@ app.use((err, _req, res, _next) => {
 /* ══════════════════════════════════════════════
    START + GRACEFUL SHUTDOWN
 ══════════════════════════════════════════════ */
-const server = app.listen(PORT, "0.0.0.0", () => {
-  console.log(`\n⚡ FETCH BACKEND v2.0.0 → http://0.0.0.0:${PORT}`);
-  console.log(`    mode: ${process.env.NODE_ENV || "development"}`);
-  console.log(`    tier 2: ${cloudflareScraper ? "✓" : "✗"}`);
-  console.log(`    tier 3: ${puppeteerExtra ? "✓" : "✗"}`);
-  console.log(`    google: ${googleClient ? "✓" : "✗"}`);
-  console.log(`    groq: ${groq ? "✓" : "✗"}`);
-  console.log(
-    `    admin: ${ADMIN_USERNAME} / ${ADMIN_PASSWORD_HASH ? "hash" : ADMIN_PLAIN_PASSWORD ? "plain" : "⚠ not set"}`,
-  );
-  console.log(
-    `    mongodb: ${mongoose.connection.readyState === 1 ? "✓" : "connecting…"}\n`,
-  );
+let server;
+tier2Ready.finally(() => {
+  server = app.listen(PORT, "0.0.0.0", () => {
+    console.log(`\n⚡ FETCH BACKEND v2.0.0 → http://0.0.0.0:${PORT}`);
+    console.log(`    mode: ${process.env.NODE_ENV || "development"}`);
+    console.log(`    tier 2: ${cloudflareScraper ? "✓" : "✗"}`);
+    console.log(`    tier 3: ${puppeteerExtra ? "✓" : "✗"}`);
+    console.log(`    google: ${googleClient ? "✓" : "✗"}`);
+    console.log(`    groq: ${groq ? "✓" : "✗"}`);
+    console.log(
+      `    admin: ${ADMIN_USERNAME} / ${ADMIN_PASSWORD_HASH ? "hash" : ADMIN_PLAIN_PASSWORD ? "plain" : "⚠ not set"}`,
+    );
+    console.log(
+      `    mongodb: ${mongoose.connection.readyState === 1 ? "✓" : "connecting…"}\n`,
+    );
+  });
 });
 
 function gracefulShutdown(sig) {
