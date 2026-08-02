@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>FETCH</title>
+  <style>
+    :root {
+      --bg: #030507; --surface: #0c1a23; --border: #1a2d3a;
+      --cyan: #00e5ff; --text: #ddeef5; --text2: #7aa3b5; --red: #ff4060;
+    }
+    * { box-sizing: border-box; }
+    body {
+      width: 300px; margin: 0; background: var(--bg); color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+    }
+    header {
+      display: flex; align-items: center; gap: 8px; padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    header .logo { font-weight: 800; letter-spacing: 0.5px; font-size: 15px; }
+    header .bracket { color: var(--cyan); }
+    header .v { margin-left: auto; font-size: 11px; color: var(--text2); }
+
+    main { padding: 16px; }
+
+    #extractBtn {
+      width: 100%; padding: 12px; border: none; border-radius: 10px;
+      background: var(--cyan); color: #030507; font-weight: 700; font-size: 14px;
+      cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+    #extractBtn:disabled { opacity: 0.6; cursor: default; }
+    #extractBtn:active { transform: scale(0.98); }
+
+    .hint {
+      font-size: 11.5px; color: var(--text2); text-align: center; margin-top: 8px; line-height: 1.4;
+    }
+
+    .stats { display: flex; gap: 8px; margin-top: 16px; }
+    .stat {
+      flex: 1; background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 10px; text-align: center;
+    }
+    .stat .num { font-size: 18px; font-weight: 700; color: var(--cyan); }
+    .stat.fail .num { color: var(--red); }
+    .stat .label { font-size: 10.5px; color: var(--text2); margin-top: 2px; }
+
+    .history { margin-top: 14px; }
+    .history h3 { font-size: 11px; color: var(--text2); text-transform: uppercase; margin: 0 0 8px; letter-spacing: 0.5px; }
+    .history-item {
+      font-size: 12px; padding: 8px 10px; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px;
+    }
+    .history-item .host { font-weight: 600; }
+    .history-item .status-ok { color: var(--cyan); }
+    .history-item .status-fail { color: var(--red); }
+    .empty { font-size: 12px; color: var(--text2); text-align: center; padding: 12px 0; }
+
+    footer {
+      padding: 12px 16px; border-top: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    footer a { color: var(--cyan); text-decoration: none; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="logo"><span class="bracket">[</span>FETCH<span class="bracket">]</span></span>
+    <span class="v">v1.0.0</span>
+  </header>
+
+  <main>
+    <button id="extractBtn">⚡ Extract This Page</button>
+    <p class="hint">Or right-click any page and choose <strong>“Extract with FETCH.”</strong> Files save straight to Downloads/FETCH.</p>
+
+    <div class="stats">
+      <div class="stat"><div class="num" id="statTotal">0</div><div class="label">Extractions</div></div>
+      <div class="stat fail"><div class="num" id="statFailed">0</div><div class="label">Failed</div></div>
+    </div>
+
+    <div class="history">
+      <h3>Recent</h3>
+      <div id="historyList"><div class="empty">No extractions yet</div></div>
+    </div>
+  </main>
+
+  <footer>
+    <a href="https://fetch-liart-gamma.vercel.app/" target="_blank">Open FETCH web app ↗</a>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,5 +1,5 @@
 /* ══════════════════════════════════════════════════════════════════
-   FETCH — server.js v2.0.1 (FIXED)
+   FETCH — server.js v2.0.0
    by ayocodes
 ═══════════════════════════════════════════════════════════════════ */
 
@@ -211,6 +211,13 @@ app.set("trust proxy", 1);
 ══════════════════════════════════════════════ */
 
 // Serve static files from frontend directory
+// sw.js must never be cached long-term, or the browser won't notice updates
+app.get("/sw.js", (req, res) => {
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.setHeader("Service-Worker-Allowed", "/");
+  res.sendFile(path.join(__dirname, "frontend", "sw.js"));
+});
+
 app.use(express.static(path.join(__dirname, "frontend")));
 
 // HTML Routes
@@ -1077,6 +1084,68 @@ function detectFramework(html, scriptSrcs) {
   return "Vanilla";
 }
 
+/* ──────────────────────────────────────────────
+   reliability layer — cache, retries, circuit breaker
+────────────────────────────────────────────── */
+const FETCH_CACHE_TTL_MS = 5 * 60_000; // reuse a successful fetch for 5 min
+const fetchResultCache = new Map(); // url -> { data, expiresAt }
+
+function getCachedFetch(url) {
+  const hit = fetchResultCache.get(url);
+  if (hit && hit.expiresAt > Date.now()) return hit.data;
+  if (hit) fetchResultCache.delete(url);
+  return null;
+}
+function setCachedFetch(url, data) {
+  fetchResultCache.set(url, {
+    data,
+    expiresAt: Date.now() + FETCH_CACHE_TTL_MS,
+  });
+  // keep the cache from growing unbounded
+  if (fetchResultCache.size > 500) {
+    const oldestKey = fetchResultCache.keys().next().value;
+    fetchResultCache.delete(oldestKey);
+  }
+}
+
+// Tier 3 (Puppeteer) circuit breaker: if it fails repeatedly (e.g. Chromium
+// missing/broken on the host), stop wasting the full timeout on every
+// request and fail straight to the aggregate error instead.
+const tier3Breaker = { consecutiveFailures: 0, openUntil: 0 };
+const TIER3_TRIP_THRESHOLD = 3;
+const TIER3_COOLDOWN_MS = 5 * 60_000;
+
+function tier3BreakerOpen() {
+  return Date.now() < tier3Breaker.openUntil;
+}
+function tier3RecordSuccess() {
+  tier3Breaker.consecutiveFailures = 0;
+  tier3Breaker.openUntil = 0;
+}
+function tier3RecordFailure() {
+  tier3Breaker.consecutiveFailures++;
+  if (tier3Breaker.consecutiveFailures >= TIER3_TRIP_THRESHOLD) {
+    tier3Breaker.openUntil = Date.now() + TIER3_COOLDOWN_MS;
+    console.warn(
+      `[tier3 breaker] tripped after ${tier3Breaker.consecutiveFailures} failures — cooling down ${TIER3_COOLDOWN_MS / 1000}s`,
+    );
+  }
+}
+
+async function withRetry(fn, { attempts = 2, baseDelayMs = 1000 } = {}) {
+  let lastErr;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await fn(i);
+    } catch (err) {
+      lastErr = err;
+      if (i < attempts)
+        await new Promise((r) => setTimeout(r, i * baseDelayMs));
+    }
+  }
+  throw lastErr;
+}
+
 async function fetchTier1(url, timeout = 20_000) {
   const res = await axios.get(url, {
     timeout,
@@ -1161,11 +1230,16 @@ async function fetchTier3(url, timeout = 40_000) {
 }
 
 async function advancedFetch(url) {
+  const cached = getCachedFetch(url);
+  if (cached) return { ...cached, fromCache: true };
+
   const errors = [];
 
   for (let i = 1; i <= 3; i++) {
     try {
-      return await fetchTier1(url, 20_000);
+      const result = await fetchTier1(url, 20_000);
+      setCachedFetch(url, result);
+      return result;
     } catch (err) {
       errors.push(`T1[${i}]: ${err.message}`);
       if ([403, 404, 451].includes(err.httpStatus)) break;
@@ -1174,15 +1248,39 @@ async function advancedFetch(url) {
   }
 
   try {
-    return await fetchTier2(url, 25_000);
+    const result = await withRetry(
+      (attempt) => fetchTier2(url, 25_000 + attempt * 5_000),
+      {
+        attempts: 2,
+        baseDelayMs: 1200,
+      },
+    );
+    setCachedFetch(url, result);
+    return result;
   } catch (err) {
     errors.push(`T2: ${err.message}`);
   }
 
-  try {
-    return await fetchTier3(url, 40_000);
-  } catch (err) {
-    errors.push(`T3: ${err.message}`);
+  if (tier3BreakerOpen()) {
+    errors.push(
+      "T3: skipped (circuit breaker open — tier 3 failing repeatedly)",
+    );
+  } else {
+    try {
+      const result = await withRetry(
+        (attempt) => fetchTier3(url, 40_000 + attempt * 10_000),
+        {
+          attempts: 2,
+          baseDelayMs: 1500,
+        },
+      );
+      tier3RecordSuccess();
+      setCachedFetch(url, result);
+      return result;
+    } catch (err) {
+      tier3RecordFailure();
+      errors.push(`T3: ${err.message}`);
+    }
   }
 
   throw new Error("all tiers failed: " + errors.join(" | "));
