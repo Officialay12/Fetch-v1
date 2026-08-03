@@ -123,8 +123,7 @@ function $(id) {
    custom cursor — only on desktop, cleanup on exit
 ────────────────────────────────────────────── */
 (function initCursor() {
-  const isTouch = window.matchMedia("(pointer: coarse)").matches;
-  if (isTouch || window.matchMedia("(max-width:768px)").matches) return;
+  if (window.matchMedia("(max-width:640px)").matches) return;
   const dot = document.querySelector(".cursor-dot");
   const ring = document.querySelector(".cursor-ring");
   if (!dot || !ring) return;
@@ -234,46 +233,36 @@ function $(id) {
 (function initTheme() {
   const btn = $("themeToggle");
   const icon = $("themeIcon");
-  const btnMob = $("themeToggleMob");
-  const iconMob = $("themeIconMob");
-  const labelMob = $("themeToggleMobLabel");
   const html = document.documentElement;
   const saved = localStorage.getItem("fetch-theme") || "dark";
 
-  function applyIcons(mode) {
-    const cls = mode === "dark" ? "fa-solid fa-moon" : "fa-solid fa-sun";
-    if (icon) icon.className = cls;
-    if (iconMob) iconMob.className = cls;
-    if (labelMob)
-      labelMob.textContent = mode === "dark" ? "Dark mode" : "Light mode";
-  }
-
   html.setAttribute("data-theme", saved);
-  applyIcons(saved);
+  if (icon)
+    icon.className = saved === "dark" ? "fa-solid fa-moon" : "fa-solid fa-sun";
 
-  function toggleTheme() {
+  btn?.addEventListener("click", () => {
     const next = html.getAttribute("data-theme") === "dark" ? "light" : "dark";
     html.setAttribute("data-theme", next);
-    applyIcons(next);
+    if (icon)
+      icon.className = next === "dark" ? "fa-solid fa-moon" : "fa-solid fa-sun";
     localStorage.setItem("fetch-theme", next);
     showToast(next === "dark" ? "dark mode on" : "light mode on", "info");
-  }
-
-  btn?.addEventListener("click", toggleTheme);
-  btnMob?.addEventListener("click", toggleTheme);
+  });
 })();
 
 /* ──────────────────────────────────────────────
    logout — clear token, back to auth page
 ────────────────────────────────────────────── */
+function performLogout() {
+  localStorage.removeItem("fetch_token");
+  localStorage.removeItem("fetch_user");
+  window.location.replace("/auth.html");
+}
+
 (function initLogout() {
-  function doLogout() {
-    localStorage.removeItem("fetch_token");
-    localStorage.removeItem("fetch_user");
-    window.location.replace("/auth.html");
-  }
-  $("logoutBtn")?.addEventListener("click", doLogout);
-  $("logoutBtnMob")?.addEventListener("click", doLogout);
+  $("logoutBtn")?.addEventListener("click", performLogout);
+  // The profile drawer has its own Sign Out button — wire it up too.
+  $("profileLogoutBtn")?.addEventListener("click", performLogout);
 })();
 
 /* ──────────────────────────────────────────────
@@ -1422,12 +1411,11 @@ $("fullscreenBtn")?.addEventListener("click", () => {
           .toUpperCase() || "?"
       ).slice(0, 2);
       const avatarEl = document.getElementById("profileAvatar");
-      const avatarEditOverlay = `<span class="profile-avatar-edit"><i class="fa-solid fa-camera"></i></span>`;
       if (avatarEl) {
         if (u.avatar) {
-          avatarEl.innerHTML = `<img src="${u.avatar}" alt="${initials}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" style="width:100%;height:100%;object-fit:cover;border-radius:50%"><span class="profile-initials" style="display:none">${initials}</span>${avatarEditOverlay}`;
+          avatarEl.innerHTML = `<img src="${u.avatar}" alt="${initials}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" style="width:100%;height:100%;object-fit:cover;border-radius:50%"><span class="profile-initials" style="display:none">${initials}</span>`;
         } else {
-          avatarEl.innerHTML = `<span class="profile-initials">${initials}</span>${avatarEditOverlay}`;
+          avatarEl.innerHTML = `<span class="profile-initials">${initials}</span>`;
         }
       }
 
@@ -1439,19 +1427,6 @@ $("fullscreenBtn")?.addEventListener("click", () => {
           navAvatar.textContent = initials;
         }
       }
-
-      const mobAvatar = document.getElementById("mobProfileAvatar");
-      if (mobAvatar) {
-        if (u.avatar) {
-          mobAvatar.innerHTML = `<img src="${u.avatar}" alt="${initials}" onerror="this.innerHTML='${initials}'" style="width:100%;height:100%;object-fit:cover;border-radius:50%">`;
-        } else {
-          mobAvatar.textContent = initials;
-        }
-      }
-      const mobName = document.getElementById("mobProfileName");
-      if (mobName) mobName.textContent = u.name || "Your account";
-      const mobEmail = document.getElementById("mobProfileEmail");
-      if (mobEmail) mobEmail.textContent = u.email || "—";
 
       const fields = {
         profileName: u.name || "—",
@@ -1501,14 +1476,6 @@ $("fullscreenBtn")?.addEventListener("click", () => {
     overlay?.classList.add("open");
     document.body.style.overflow = "hidden";
     if (!profileLoaded) loadProfile();
-    // also close the mobile menu, if it's open, so panels don't stack
-    const mobileMenu = document.getElementById("mobileMenu");
-    const hamburger = document.getElementById("hamburger");
-    if (mobileMenu?.classList.contains("open")) {
-      mobileMenu.classList.remove("open");
-      hamburger?.classList.remove("active");
-      mobileMenu.setAttribute("aria-hidden", "true");
-    }
   }
 
   function closePanel() {
@@ -1520,18 +1487,10 @@ $("fullscreenBtn")?.addEventListener("click", () => {
   btn.addEventListener("click", openPanel);
   closeB?.addEventListener("click", closePanel);
   overlay?.addEventListener("click", closePanel);
-  document
-    .getElementById("mobProfileCard")
-    ?.addEventListener("click", openPanel);
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && panel.classList.contains("open")) closePanel();
   });
-
-  // Load the profile as soon as we know the user is signed in, so the
-  // navbar/mobile-menu avatar shows the real photo/initials right away
-  // instead of sitting on the "?" placeholder until the panel is opened.
-  if (localStorage.getItem("fetch_token")) loadProfile();
 
   const saveNameBtn = document.getElementById("profileSaveName");
   saveNameBtn?.addEventListener("click", async () => {
@@ -1563,82 +1522,6 @@ $("fullscreenBtn")?.addEventListener("click", () => {
       showToast("could not save", "error");
     }
   });
-
-  /* ── avatar upload — click the avatar, pick a photo, resize + save ── */
-  const avatarBtn = document.getElementById("profileAvatar");
-  const avatarInput = document.getElementById("profileAvatarInput");
-
-  function resizeImageFile(file, maxSize = 256, quality = 0.85) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = () => reject(new Error("could not read file"));
-      reader.onload = () => {
-        const img = new Image();
-        img.onerror = () => reject(new Error("could not read image"));
-        img.onload = () => {
-          const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
-          const w = Math.max(1, Math.round(img.width * scale));
-          const h = Math.max(1, Math.round(img.height * scale));
-          const canvas = document.createElement("canvas");
-          canvas.width = w;
-          canvas.height = h;
-          const ctx = canvas.getContext("2d");
-          ctx.drawImage(img, 0, 0, w, h);
-          resolve(canvas.toDataURL("image/jpeg", quality));
-        };
-        img.src = reader.result;
-      };
-      reader.readAsDataURL(file);
-    });
-  }
-
-  avatarBtn?.addEventListener("click", () => avatarInput?.click());
-
-  avatarInput?.addEventListener("change", async () => {
-    const file = avatarInput.files?.[0];
-    avatarInput.value = "";
-    if (!file) return;
-
-    if (!/^image\/(png|jpe?g|webp)$/i.test(file.type)) {
-      showToast("use a png, jpg, or webp image", "error");
-      return;
-    }
-    if (file.size > 8 * 1024 * 1024) {
-      showToast("image is too large (max 8MB)", "error");
-      return;
-    }
-
-    const token = localStorage.getItem("fetch_token");
-    if (!token) return;
-
-    avatarBtn.classList.add("uploading");
-    try {
-      const dataUrl = await resizeImageFile(file);
-      const res = await fetch(`${BACKEND_URL}/api/auth/profile`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: "Bearer " + token,
-        },
-        body: JSON.stringify({ avatar: dataUrl }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        const stored = JSON.parse(localStorage.getItem("fetch_user") || "{}");
-        stored.avatar = dataUrl;
-        localStorage.setItem("fetch_user", JSON.stringify(stored));
-        profileLoaded = false;
-        await loadProfile();
-        showToast("profile photo updated", "success");
-      } else {
-        showToast(data.error || "could not update photo", "error");
-      }
-    } catch (e) {
-      showToast(e.message || "could not update photo", "error");
-    } finally {
-      avatarBtn.classList.remove("uploading");
-    }
-  });
 })();
 
 /* ──────────────────────────────────────────────
@@ -1668,28 +1551,31 @@ if (heroUrlInput && appUrlInput) {
 }
 
 /* ──────────────────────────────────────────────
-   magnetic buttons — fun hover effect
+   magnetic buttons — fun hover effect (desktop only —
+   skipped on touch so it doesn't fight with taps)
 ────────────────────────────────────────────── */
-document
-  .querySelectorAll(
-    ".btn-primary:not(.btn-loading), .app-fetch-btn, .deobfuscate-standalone-btn",
-  )
-  .forEach((btn) => {
-    btn.addEventListener("mousemove", function (e) {
-      if (this.disabled) return;
-      const r = this.getBoundingClientRect();
-      const dx = (e.clientX - (r.left + r.width / 2)) * 0.2;
-      const dy = (e.clientY - (r.top + r.height / 2)) * 0.2;
-      this.style.transform = `translate(${dx}px, ${dy}px)`;
+if (!window.matchMedia("(pointer: coarse)").matches) {
+  document
+    .querySelectorAll(
+      ".btn-primary:not(.btn-loading), .app-fetch-btn, .deobfuscate-standalone-btn",
+    )
+    .forEach((btn) => {
+      btn.addEventListener("mousemove", function (e) {
+        if (this.disabled) return;
+        const r = this.getBoundingClientRect();
+        const dx = (e.clientX - (r.left + r.width / 2)) * 0.2;
+        const dy = (e.clientY - (r.top + r.height / 2)) * 0.2;
+        this.style.transform = `translate(${dx}px, ${dy}px)`;
+      });
+      btn.addEventListener("mouseleave", function () {
+        this.style.transition = "transform .4s cubic-bezier(.16,1,.3,1)";
+        this.style.transform = "";
+      });
+      btn.addEventListener("mouseenter", function () {
+        this.style.transition = "transform .1s ease";
+      });
     });
-    btn.addEventListener("mouseleave", function () {
-      this.style.transition = "transform .4s cubic-bezier(.16,1,.3,1)";
-      this.style.transform = "";
-    });
-    btn.addEventListener("mouseenter", function () {
-      this.style.transition = "transform .1s ease";
-    });
-  });
+}
 
 /* ──────────────────────────────────────────────
    active nav on scroll — highlight current section

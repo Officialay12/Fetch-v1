@@ -1,8 +1,8 @@
 /* ══════════════════════════════════════════════════════════════════
    FETCH — extension-promo.js
-   Desktop-only promo for the FETCH browser extension. Shows a small
-   floating CTA; clicking it opens a modal with a real download button
-   and step-by-step "load unpacked" instructions.
+   Desktop-only: a permanent "Add to Browser" nav button, plus a
+   one-time floating suggestion card. Both open the same modal with
+   a real download button and step-by-step "load unpacked" instructions.
 
    Include this on desktop-facing pages (e.g. index.html) after pwa.js.
    Requires: /downloads/fetch-extension-v1.0.0.zip to exist on your
@@ -12,12 +12,12 @@
 ═══════════════════════════════════════════════════════════════════ */
 
 (function () {
-  const DOWNLOAD_URL = "/downloads/fetch-extension";
-  const DOWNLOAD_FILENAME = "fetch-extension-v1";
+  const DOWNLOAD_URL = "/downloads/fetch-extension-v1.0.0.zip";
+  const DOWNLOAD_FILENAME = "fetch-extension-v1.0.0.zip";
   const DISMISS_KEY = "fetch_ext_promo_dismissed_at";
   const DISMISS_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
 
-  /* ── only show on desktop: fine pointer, wide viewport, non-mobile UA ── */
+  /* ── only relevant on desktop: fine pointer, wide viewport, non-mobile UA ── */
   function isDesktop() {
     const finePointer =
       window.matchMedia && window.matchMedia("(pointer: fine)").matches;
@@ -36,18 +36,50 @@
     return /Chrome|Chromium|Edg|OPR|Brave/i.test(ua) && !/Firefox/i.test(ua);
   }
 
+  function isEligible() {
+    return isDesktop() && isChromiumBrowser();
+  }
+
   function alreadyDismissedRecently() {
     const dismissedAt = Number(localStorage.getItem(DISMISS_KEY) || 0);
     return Date.now() - dismissedAt < DISMISS_COOLDOWN_MS;
   }
 
   function init() {
-    if (!isDesktop() || !isChromiumBrowser()) return;
-    if (alreadyDismissedRecently()) return;
-    if (document.getElementById("fetch-ext-cta")) return;
-
     injectStyles();
-    showCTA();
+
+    // The nav button is a permanent, deliberate entry point — show it
+    // any time we're eligible, independent of the floating card's
+    // dismiss cooldown below.
+    wireNavButton();
+
+    // The floating card is a one-time nudge, respects its own cooldown.
+    if (isEligible() && !alreadyDismissedRecently()) {
+      showCTA();
+    }
+
+    // Re-check on resize/orientation change — e.g. someone maximizes
+    // a narrow window, or rotates a tablet into a desktop-like width.
+    let resizeTimer = null;
+    window.addEventListener("resize", () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(wireNavButton, 250);
+    });
+  }
+
+  function wireNavButton() {
+    const btn = document.getElementById("addToBrowserBtn");
+    if (!btn) return;
+
+    if (isEligible()) {
+      btn.style.display = "inline-flex";
+      if (!btn.dataset.wired) {
+        btn.dataset.wired = "1";
+        btn.addEventListener("click", () => openModal());
+      }
+    } else {
+      btn.style.display = "none";
+    }
   }
 
   function injectStyles() {
@@ -56,11 +88,12 @@
     style.id = "fetch-ext-promo-styles";
     style.textContent = `
       #fetch-ext-cta {
-        position: fixed; bottom: 20px; right: 20px; z-index: 99997;
-        background: #0c1a23; color: #ddeef5; border: 1px solid #1a2d3a;
+        position: fixed; bottom: max(20px, env(safe-area-inset-bottom)); right: 20px; z-index: 99997;
+        background: linear-gradient(160deg, #0c1a23, #0a141c); color: #ddeef5;
+        border: 1px solid #1a2d3a;
         border-radius: 12px; padding: 12px 14px; max-width: 300px;
         font-family: 'JetBrains Mono', monospace; font-size: 12.5px;
-        box-shadow: 0 4px 40px rgba(0,0,0,0.5);
+        box-shadow: 0 10px 50px rgba(0,0,0,0.5);
         display: flex; align-items: flex-start; gap: 10px;
         animation: fetchExtSlideIn 0.35s ease-out;
       }
@@ -89,6 +122,44 @@
         line-height: 1; padding: 0 2px; align-self: flex-start;
       }
       #fetch-ext-cta .ext-close:hover { color: #ddeef5; }
+
+      /* nav "Add to Browser" button */
+      .add-to-browser-btn {
+        display: none;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 1rem;
+        background: var(--surface);
+        border: 1.5px solid rgba(0, 229, 255, 0.35);
+        border-radius: 10px;
+        color: var(--cyan);
+        font-family: var(--font-mono);
+        font-size: 0.8rem;
+        font-weight: 600;
+        white-space: nowrap;
+        flex-shrink: 0;
+        position: relative;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .add-to-browser-btn:hover {
+        background: var(--cyan-dim);
+        border-color: var(--cyan);
+        transform: translateY(-1px);
+      }
+      .add-to-browser-btn i {
+        font-size: 0.85rem;
+      }
+      .add-to-browser-btn .atb-badge {
+        background: linear-gradient(135deg, var(--cyan), var(--lime));
+        color: #030507;
+        font-size: 0.58rem;
+        font-weight: 800;
+        letter-spacing: 0.03em;
+        padding: 0.1rem 0.4rem;
+        border-radius: 100px;
+        text-transform: uppercase;
+      }
 
       #fetch-ext-modal-overlay {
         position: fixed; inset: 0; z-index: 99999;
@@ -150,11 +221,16 @@
       }
       #fetch-ext-modal-close:hover { color: #ddeef5; }
       #fetch-ext-modal { position: relative; }
+
+      @media (max-width: 899px) {
+        .add-to-browser-btn { display: none !important; }
+      }
     `;
     document.head.appendChild(style);
   }
 
   function showCTA() {
+    if (document.getElementById("fetch-ext-cta")) return;
     const el = document.createElement("div");
     el.id = "fetch-ext-cta";
     el.innerHTML = `
@@ -229,7 +305,6 @@
       });
 
     function close() {
-      localStorage.setItem(DISMISS_KEY, String(Date.now()));
       overlay.remove();
     }
 
@@ -246,6 +321,9 @@
       }
     });
   }
+
+  // Expose for other scripts (or the console) to trigger manually.
+  window.openFetchExtensionModal = openModal;
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);
