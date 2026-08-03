@@ -197,7 +197,12 @@ button {
       theme: "material-darker",
       tabSize: 2,
       indentUnit: 2,
-      viewportMargin: Infinity,
+      // NOTE: no viewportMargin: Infinity here on purpose — that flag forces
+      // CM to render every line into the DOM instead of virtualizing, which
+      // gets janky fast on large pasted files (e.g. a full scraped page).
+      // CM5's default viewport virtualization is smoother at any size.
+      cursorBlinkRate: 530,
+      cursorScrollMargin: 40,
     };
     if (!cmInstances.html) {
       cmInstances.html = CodeMirror.fromTextArea(els.taHtml, {
@@ -245,7 +250,7 @@ button {
     updateCharCount();
     if (els.autoRun && els.autoRun.checked) {
       clearTimeout(runDebounce);
-      runDebounce = setTimeout(runPreview, 500);
+      runDebounce = setTimeout(runPreview, 350);
     }
     setStatus("Unsaved changes");
   }
@@ -366,13 +371,40 @@ ${scriptTag}
 
   window.addEventListener("message", (e) => {
     if (!e.data || !e.data.__fetchConsole) return;
-    appendConsoleEntry(e.data.level, e.data.args);
+    queueConsoleEntry(e.data.level, e.data.args);
   });
 
-  function appendConsoleEntry(level, args) {
-    if (!els.consoleLog) return;
-    const empty = els.consoleLog.querySelector(".console-empty");
-    if (empty) empty.remove();
+  // Rapid console.log calls in the previewed page (e.g. inside a loop) used
+  // to trigger a DOM append + scrollTop reflow per message. Batch a burst
+  // of messages into a single rAF flush so the console panel (and the rest
+  // of the UI) doesn't stutter.
+  let pendingLogs = [];
+  let flushScheduled = false;
+  function queueConsoleEntry(level, args) {
+    pendingLogs.push({ level, args });
+    if (flushScheduled) return;
+    flushScheduled = true;
+    requestAnimationFrame(() => {
+      const batch = pendingLogs;
+      pendingLogs = [];
+      flushScheduled = false;
+      const frag = document.createDocumentFragment();
+      batch.forEach(({ level, args }) => {
+        frag.appendChild(buildConsoleRow(level, args));
+      });
+      if (!els.consoleLog) return;
+      const empty = els.consoleLog.querySelector(".console-empty");
+      if (empty) empty.remove();
+      els.consoleLog.appendChild(frag);
+      els.consoleLog.scrollTop = els.consoleLog.scrollHeight;
+
+      consoleCount += batch.length;
+      els.consoleBadge.textContent = String(consoleCount);
+      els.consoleBadge.classList.remove("hidden");
+    });
+  }
+
+  function buildConsoleRow(level, args) {
     const row = document.createElement("div");
     row.className = `console-row console-${level}`;
     const icon =
@@ -383,12 +415,7 @@ ${scriptTag}
           : "fa-angle-right";
     row.innerHTML = `<i class="fa-solid ${icon}" aria-hidden="true"></i><span class="console-text"></span>`;
     row.querySelector(".console-text").textContent = args.join(" ");
-    els.consoleLog.appendChild(row);
-    els.consoleLog.scrollTop = els.consoleLog.scrollHeight;
-
-    consoleCount++;
-    els.consoleBadge.textContent = String(consoleCount);
-    els.consoleBadge.classList.remove("hidden");
+    return row;
   }
 
   function clearConsole() {
@@ -806,5 +833,15 @@ ${scriptTag}
     document.addEventListener("DOMContentLoaded", init);
   } else {
     init();
+  }
+
+  // Warm up CodeMirror's CSS/JS/mode bundle in the background as soon as
+  // the browser is idle, rather than waiting for the user to open the
+  // editor. Doesn't block anything else — if openEditor() fires first,
+  // ensureCodeMirror() just resolves the same in-flight promise.
+  if ("requestIdleCallback" in window) {
+    requestIdleCallback(() => ensureCodeMirror(), { timeout: 4000 });
+  } else {
+    setTimeout(() => ensureCodeMirror(), 1500);
   }
 })();

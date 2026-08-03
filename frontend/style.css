@@ -3986,9 +3986,18 @@ mark.search-highlight {
     }
 }
 
-/* Navbar: keep icons from crowding/overflowing on narrow
-   phones (iPhone SE and similar ~320–375px widths). */
-@media (max-width: 480px) {
+/* ══════════════════════════════════════════════════
+   NAVBAR — mobile decluttering
+   Below 640px the top bar was carrying logo + theme
+   toggle + install button + profile avatar + logout +
+   hamburger all in one row — five icon buttons plus the
+   logo before you even get to the menu trigger. That's
+   the "choked" bar. Fix: collapse theme/install/logout
+   into the hamburger menu (they already have full-width
+   rows there — see .mob-menu-account) and leave the top
+   bar to just logo, profile avatar, and hamburger.
+═══════════════════════════════════════════════════ */
+@media (max-width: 640px) {
     .nav-inner {
         padding: 0 1rem;
         gap: 0.75rem;
@@ -3999,38 +4008,74 @@ mark.search-highlight {
     }
 
     .nav-actions {
-        gap: 0.4rem;
+        gap: 0.55rem;
     }
 
     .theme-btn,
     .logout-btn,
-    #pwaInstallBtn {
-        width: 36px;
-        height: 36px;
+    #pwaInstallBtn,
+    .add-to-browser-btn {
+        display: none !important;
     }
 
     .profile-nav-btn {
-        width: 34px;
-        height: 34px;
-    }
-
-    .hamburger {
         width: 36px;
         height: 36px;
     }
+
+    .hamburger {
+        width: 38px;
+        height: 38px;
+    }
 }
 
-@media (max-width: 360px) {
-    .nav-actions {
-        gap: 0.3rem;
-    }
+/* ── account rows inside the hamburger menu (mirrors the
+   desktop theme/profile/logout buttons that got hidden) ── */
+.mob-menu-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 1rem 0;
+}
 
-    /* On very small screens, hide the standalone install
-       button in the navbar — it's duplicated inside the
-       hamburger menu (#pwaInstallMobBtn) already. */
-    #pwaInstallBtn {
-        display: none !important;
-    }
+.mob-menu-account {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.mob-link-sm {
+    display: flex;
+    align-items: center;
+    gap: 0.85rem;
+    padding: 0.85rem 1.25rem;
+    font-size: 1rem;
+}
+
+.mob-link-sm span:not(.mob-link-icon) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mob-link-icon {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.85rem;
+    flex-shrink: 0;
+}
+
+#mobLogoutBtn:hover {
+    color: var(--red);
+}
+
+#mobLogoutBtn:hover .mob-link-icon {
+    border-color: var(--red);
 }
 
 /* Comfortable touch targets (~40px min) for icon-only
@@ -4373,6 +4418,19 @@ button,
     border-radius: 0;
 }
 
+@media (max-width: 640px) {
+    .editor-overlay {
+        padding: 0;
+    }
+
+    .editor-shell {
+        max-width: none;
+        max-height: none;
+        border-radius: 0;
+        border: none;
+    }
+}
+
 /* ── titlebar ── */
 .editor-titlebar {
     display: flex;
@@ -4597,6 +4655,13 @@ button,
 
 /* CodeMirror takes over once it loads — make it fill the pane and
    match the app's dark palette rather than the default theme box. */
+.editor-code-wrap {
+    /* Reserve the pane's height up front so the textarea→CodeMirror swap
+       (once the CM bundle finishes loading) doesn't cause a visible
+       reflow/flash — the container size stays constant either way. */
+    min-height: 100%;
+}
+
 .editor-code-wrap .CodeMirror {
     flex: 1;
     height: 100% !important;
@@ -4609,6 +4674,28 @@ button,
 .editor-code-wrap .CodeMirror-gutters {
     background: #0a0e14;
     border-right: 1px solid var(--border);
+}
+
+/* CM5's base stylesheet hardcodes `.CodeMirror-cursor { border-left: 1px
+   solid black; }` and material-darker (like most CM5 themes) never
+   overrides it — so the cursor is a black line on a #0a0e14 background,
+   i.e. invisible. This is the actual fix for the "cursor not showing" bug. */
+.editor-code-wrap .CodeMirror-cursor {
+    border-left: 2px solid var(--cyan) !important;
+    z-index: 3;
+}
+
+/* Same root cause hits selection highlighting — make sure it's visible too. */
+.editor-code-wrap .CodeMirror-selected {
+    background: rgba(0, 229, 255, 0.15) !important;
+}
+.editor-code-wrap .CodeMirror-focused .CodeMirror-selected {
+    background: rgba(0, 229, 255, 0.15) !important;
+}
+.editor-code-wrap .CodeMirror-line::selection,
+.editor-code-wrap .CodeMirror-line > span::selection,
+.editor-code-wrap .CodeMirror-line > span > span::selection {
+    background: rgba(0, 229, 255, 0.15) !important;
 }
 
 /* ── console panel ── */
@@ -4826,17 +4913,111 @@ button,
     display: none !important;
 }
 
-@media (max-width: 640px) {
+/* ══════════════════════════════════════════════════
+   EDITOR — mobile/tablet responsiveness
+   Matches the JS stacked-layout breakpoint (880px, see
+   checkStackedLayout in editor.js) so the titlebar
+   compacts at the same width the code/preview panes
+   stack — previously the titlebar only wrapped below
+   640px, leaving a cramped no-man's-land between 640
+   and 880px where 6 icon buttons + a select + a text
+   input fought for one row (this is what showed up in
+   the screenshot).
+═══════════════════════════════════════════════════ */
+@media (max-width: 880px) {
+    /* Decorative mac-style dots aren't worth the width here. */
+    .editor-dots {
+        display: none;
+    }
+
     .editor-titlebar {
         flex-wrap: wrap;
         row-gap: 0.5rem;
+        padding: 0.6rem 0.85rem;
     }
 
-    .editor-select {
-        max-width: 100px;
+    .editor-title-info {
+        flex: 1 1 auto;
+        min-width: 0;
     }
 
     .editor-project-name {
-        max-width: 130px;
+        flex: 1;
+        min-width: 80px;
+        max-width: none;
+    }
+
+    /* Actions drop to their own full-width row instead of being
+       squeezed onto the same line as the title, and are allowed to
+       wrap with breathing room instead of overflowing. */
+    .editor-titlebar-actions {
+        flex: 1 1 100%;
+        margin-left: 0;
+        flex-wrap: wrap;
+        row-gap: 0.4rem;
+        justify-content: flex-end;
+    }
+
+    .editor-select {
+        flex: 1 1 auto;
+        min-width: 0;
+        max-width: 140px;
+    }
+}
+
+@media (max-width: 480px) {
+    .editor-project-name {
+        font-size: 0.8rem;
+    }
+
+    .editor-select {
+        max-width: 110px;
+        font-size: 0.68rem;
+    }
+
+    .editor-titlebar-actions .icon-btn {
+        width: 34px;
+        height: 34px;
+    }
+}
+
+/* ── file tabs: comfortable touch targets, no icon crowding ── */
+@media (max-width: 640px) {
+    .editor-file-tab {
+        padding: 0.6rem 0.7rem;
+        font-size: 0.75rem;
+    }
+}
+
+/* ── preview bar: the "Auto-run" text label is the first thing
+   to go — the switch itself is still there, just unlabeled — and
+   the device-size toggle shrinks slightly to match. ── */
+@media (max-width: 560px) {
+    .editor-preview-bar {
+        padding: 0.45rem 0.6rem;
+        gap: 0.5rem;
+    }
+
+    .toggle-wrap .toggle-label {
+        display: none;
+    }
+
+    .editor-preview-actions {
+        gap: 0.4rem;
+    }
+
+    .device-btn {
+        width: 27px;
+        height: 24px;
+    }
+}
+
+/* ── statusbar: char count stays, shortcut hint already hides
+   under 720px (see .editor-shortcut-hint rule above) — just
+   tighten padding so the row doesn't feel cramped. ── */
+@media (max-width: 480px) {
+    .editor-statusbar {
+        padding: 0.4rem 0.75rem;
+        font-size: 0.65rem;
     }
 }

@@ -231,22 +231,34 @@ function $(id) {
    theme — dark/light mode, saves to localstorage
 ────────────────────────────────────────────── */
 (function initTheme() {
-  const btn = $("themeToggle");
   const icon = $("themeIcon");
+  const mobIcon = $("mobThemeIcon");
   const html = document.documentElement;
   const saved = localStorage.getItem("fetch-theme") || "dark";
 
-  html.setAttribute("data-theme", saved);
-  if (icon)
-    icon.className = saved === "dark" ? "fa-solid fa-moon" : "fa-solid fa-sun";
+  function applyIcon(theme) {
+    const cls = theme === "dark" ? "fa-solid fa-moon" : "fa-solid fa-sun";
+    if (icon) icon.className = cls;
+    if (mobIcon) mobIcon.className = cls;
+  }
 
-  btn?.addEventListener("click", () => {
+  html.setAttribute("data-theme", saved);
+  applyIcon(saved);
+
+  function toggleTheme() {
     const next = html.getAttribute("data-theme") === "dark" ? "light" : "dark";
     html.setAttribute("data-theme", next);
-    if (icon)
-      icon.className = next === "dark" ? "fa-solid fa-moon" : "fa-solid fa-sun";
+    applyIcon(next);
     localStorage.setItem("fetch-theme", next);
     showToast(next === "dark" ? "dark mode on" : "light mode on", "info");
+  }
+
+  // Desktop nav button + the mirrored row inside the mobile hamburger
+  // menu (the desktop button is hidden below 640px, see style.css).
+  $("themeToggle")?.addEventListener("click", toggleTheme);
+  $("mobThemeToggle")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    toggleTheme();
   });
 })();
 
@@ -263,6 +275,12 @@ function performLogout() {
   $("logoutBtn")?.addEventListener("click", performLogout);
   // The profile drawer has its own Sign Out button — wire it up too.
   $("profileLogoutBtn")?.addEventListener("click", performLogout);
+  // Mirrored row inside the mobile hamburger menu (desktop logoutBtn is
+  // hidden below 640px, see style.css .mob-menu-account).
+  $("mobLogoutBtn")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    performLogout();
+  });
 })();
 
 /* ──────────────────────────────────────────────
@@ -1465,6 +1483,9 @@ $("fullscreenBtn")?.addEventListener("click", () => {
       const nameInput = document.getElementById("profileNameInput");
       if (nameInput) nameInput.value = u.name || "";
 
+      const mobLabel = document.getElementById("mobProfileLabel");
+      if (mobLabel) mobLabel.textContent = u.name || u.email || "Profile";
+
       profileLoaded = true;
     } catch (e) {
       console.warn("[profile]", e.message);
@@ -1487,6 +1508,14 @@ $("fullscreenBtn")?.addEventListener("click", () => {
   btn.addEventListener("click", openPanel);
   closeB?.addEventListener("click", closePanel);
   overlay?.addEventListener("click", closePanel);
+
+  // Mirrored row inside the mobile hamburger menu — same panel, just a
+  // second entry point since the mobile menu is where secondary actions
+  // now live on narrow screens.
+  document.getElementById("mobProfileBtn")?.addEventListener("click", (e) => {
+    e.preventDefault();
+    openPanel();
+  });
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && panel.classList.contains("open")) closePanel();

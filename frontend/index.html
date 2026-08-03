@@ -97,9 +97,6 @@
                 <li data-pwa-hide><a href="#about" class="nav-link">About</a></li>
             </ul>
             <div class="nav-actions">
-                <button id="codeEditorNavBtn" class="theme-btn" aria-label="Open Code Editor" title="Code Editor">
-                    <i class="fa-solid fa-code"></i>
-                </button>
                 <button id="addToBrowserBtn" class="add-to-browser-btn" aria-label="Add FETCH to your browser"
                     title="Add FETCH as a browser extension" style="display:none;">
                     <i class="fa-solid fa-puzzle-piece" aria-hidden="true"></i>
@@ -145,6 +142,30 @@
                 <li>
                     <a href="#demo" class="mob-link mob-cta">
                         <i class="fa-solid fa-bolt"></i> Launch App
+                    </a>
+                </li>
+            </ul>
+            <!-- Account row: moved out of the top nav bar on mobile so the
+                 header stays to logo + hamburger only. Mirrors the desktop
+                 theme/profile/logout buttons but as full-width menu rows. -->
+            <div class="mob-menu-divider" aria-hidden="true"></div>
+            <ul class="mob-menu-account">
+                <li>
+                    <a href="#" id="mobProfileBtn" class="mob-link mob-link-sm">
+                        <span class="mob-link-icon"><i class="fa-solid fa-user" id="mobProfileIcon"></i></span>
+                        <span id="mobProfileLabel">Profile</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="#" id="mobThemeToggle" class="mob-link mob-link-sm">
+                        <span class="mob-link-icon"><i class="fa-solid fa-moon" id="mobThemeIcon"></i></span>
+                        <span>Toggle Theme</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="#" id="mobLogoutBtn" class="mob-link mob-link-sm">
+                        <span class="mob-link-icon"><i class="fa-solid fa-sign-out-alt"></i></span>
+                        <span>Logout</span>
                     </a>
                 </li>
             </ul>
