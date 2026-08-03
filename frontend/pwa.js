@@ -354,6 +354,121 @@
     if (isIOS()) showInstallUI();
   });
 
+  /* ══════════════════════════════════════════════
+     Connectivity watcher
+     navigator.onLine only reflects whether the network interface is
+     up — it reports "online" on wifi with no internet (captive
+     portals, router with no upstream, etc.), and the 'online'/'offline'
+     events aren't reliably fired everywhere. So on top of listening
+     for those, we actively verify reachability with a small same-origin
+     request, and poll while offline instead of waiting indefinitely
+     for a browser event that may never come.
+  ══════════════════════════════════════════════ */
+  (function () {
+    const CHECK_URL = "/manifest.json";
+    const POLL_MS = 10000;
+    const TIMEOUT_MS = 6000;
+
+    let online = navigator.onLine;
+    let checking = false;
+    let pollId = null;
+    let banner = null;
+    let hideTimer = null;
+    window.fetchIsOnline = online;
+
+    function setState(nextOnline) {
+      const changed = nextOnline !== online;
+      online = nextOnline;
+      window.fetchIsOnline = online;
+      if (!changed) return;
+      window.dispatchEvent(
+        new CustomEvent("fetch:connectivity", { detail: { online } }),
+      );
+      renderBanner();
+      online ? stopPolling() : startPolling();
+    }
+
+    async function verify() {
+      if (checking) return;
+      checking = true;
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+        const res = await fetch(`${CHECK_URL}?_=${Date.now()}`, {
+          cache: "no-store",
+          mode: "same-origin",
+          signal: ctrl.signal,
+        });
+        clearTimeout(timer);
+        setState(!!res && res.ok);
+      } catch {
+        setState(false);
+      } finally {
+        checking = false;
+      }
+    }
+
+    function startPolling() {
+      if (pollId) return;
+      pollId = setInterval(verify, POLL_MS);
+    }
+    function stopPolling() {
+      clearInterval(pollId);
+      pollId = null;
+    }
+
+    function ensureBanner() {
+      if (banner) return banner;
+      if (!document.getElementById("fetch-conn-banner-anim")) {
+        const s = document.createElement("style");
+        s.id = "fetch-conn-banner-anim";
+        s.textContent = `#fetch-conn-banner.show { transform: translateY(0); }`;
+        document.head.appendChild(s);
+      }
+      banner = document.createElement("div");
+      banner.id = "fetch-conn-banner";
+      banner.setAttribute("role", "status");
+      banner.setAttribute("aria-live", "polite");
+      banner.style.cssText = `
+        position: fixed; top: 0; left: 0; right: 0; z-index: 100001;
+        padding: 8px 16px; padding-top: max(8px, env(safe-area-inset-top));
+        color: #ddeef5; font-family: 'JetBrains Mono', monospace; font-size: 12.5px;
+        font-weight: 600; text-align: center;
+        display: flex; align-items: center; justify-content: center; gap: 8px;
+        transform: translateY(-100%); transition: transform 0.3s cubic-bezier(0.16,1,0.3,1);
+      `;
+      document.body.appendChild(banner);
+      return banner;
+    }
+
+    function renderBanner() {
+      clearTimeout(hideTimer);
+      if (online) {
+        // Was already hidden and never shown offline this session — nothing to say.
+        if (!banner) return;
+        banner.style.background = "#0c2a1a";
+        banner.innerHTML = `<i class="fa-solid fa-wifi" aria-hidden="true" style="color:#aaff00;"></i><span>Back online</span>`;
+        banner.classList.add("show");
+        hideTimer = setTimeout(() => banner.classList.remove("show"), 2200);
+        return;
+      }
+      const el = ensureBanner();
+      el.style.background = "#2a0c14";
+      el.innerHTML = `<i class="fa-solid fa-triangle-exclamation" aria-hidden="true" style="color:#ff4060;"></i><span>You're offline — some features won't work until you reconnect</span>`;
+      el.classList.add("show");
+    }
+
+    window.addEventListener("online", verify);
+    window.addEventListener("offline", () => setState(false));
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") verify();
+    });
+
+    // Don't block first paint — check shortly after load, then whenever
+    // we think we're offline, keep polling for real reconnection.
+    window.addEventListener("load", () => setTimeout(verify, 800));
+  })();
+
   window.triggerFetchInstall = async function () {
     if (deferredPrompt) {
       deferredPrompt.prompt();

@@ -926,6 +926,10 @@
                     <input type="text" id="editorProjectName" class="editor-project-name" value="untitled-project"
                         spellcheck="false" autocomplete="off" aria-label="Project name">
                 </div>
+                <div class="editor-conn-status" id="editorConnStatus" aria-live="polite">
+                    <span class="conn-dot" aria-hidden="true"></span>
+                    <span class="editor-conn-label" id="editorConnLabel">Online</span>
+                </div>
                 <div class="editor-titlebar-actions">
                     <select id="editorProjectSelect" class="editor-select" title="Saved projects"
                         aria-label="Saved projects">
@@ -954,13 +958,18 @@
                 </div>
             </div>
 
-            <div class="editor-stacked-toggle" id="editorStackedToggle">
-                <button class="stacked-toggle-btn active" data-view="code" id="editorViewCodeBtn">
-                    <i class="fa-solid fa-code"></i> Code
-                </button>
-                <button class="stacked-toggle-btn" data-view="preview" id="editorViewPreviewBtn">
-                    <i class="fa-solid fa-eye"></i> Preview
-                </button>
+            <div class="editor-view-lever hidden" id="editorStackedToggle" data-active="code">
+                <div class="lever-track" role="radiogroup" aria-label="Switch between code and live preview">
+                    <span class="lever-thumb" aria-hidden="true"></span>
+                    <button class="lever-btn active" data-view="code" id="editorViewCodeBtn" role="radio"
+                        aria-checked="true">
+                        <i class="fa-solid fa-code"></i> Code
+                    </button>
+                    <button class="lever-btn" data-view="preview" id="editorViewPreviewBtn" role="radio"
+                        aria-checked="false">
+                        <i class="fa-solid fa-eye"></i> Preview
+                    </button>
+                </div>
             </div>
 
             <div class="editor-body" id="editorBody">

@@ -145,37 +145,61 @@
             var hint = document.getElementById('hint');
             var msg = document.getElementById('statusMsg');
             var retryBtn = document.getElementById('retryBtn');
+            var reconnecting = false;
 
             function attemptReload() {
                 window.location.reload();
             }
 
+            function checkReachable() {
+                if (reconnecting) return;
+                var ctrl = ('AbortController' in window) ? new AbortController() : null;
+                var timer = ctrl && setTimeout(function () { ctrl.abort(); }, 4000);
+                fetch('/manifest.json?_=' + Date.now(), {
+                    cache: 'no-store',
+                    mode: 'same-origin',
+                    signal: ctrl ? ctrl.signal : undefined
+                })
+                    .then(function (res) {
+                        if (timer) clearTimeout(timer);
+                        if (res.ok) {
+                            reconnecting = true;
+                            clearInterval(pollId);
+                            hint.textContent = 'Back online — reloading…';
+                            hint.classList.add('show');
+                            msg.textContent = "You're back online!";
+                            setTimeout(attemptReload, 400);
+                        }
+                    })
+                    .catch(function () {
+                        if (timer) clearTimeout(timer);
+                    });
+            }
+
             retryBtn.addEventListener('click', attemptReload);
 
-            // Auto-retry the moment the browser reports we're back online.
-            window.addEventListener('online', function () {
-                hint.textContent = 'Back online — reloading…';
-                hint.classList.add('show');
-                msg.textContent = "You're back online!";
-                setTimeout(attemptReload, 600);
+            // Auto-retry the moment the browser reports we're back online —
+            // still verify reachability rather than trusting the event blindly,
+            // since 'online' just means the network interface is up, not that
+            // the internet (or this server) is actually reachable.
+            window.addEventListener('online', checkReachable);
+
+            // Re-check whenever the tab regains focus (e.g. user switched
+            // apps to fix their wifi, then came back).
+            document.addEventListener('visibilitychange', function () {
+                if (document.visibilityState === 'visible') checkReachable();
             });
 
-            // Belt-and-suspenders poll, since 'online' isn't always reliable
-            // on flaky connections (e.g. captive portals, spotty mobile signal).
+            // Belt-and-suspenders poll, since 'online'/visibility events aren't
+            // reliable on every platform (e.g. captive portals, spotty mobile
+            // signal that never fully drops the interface).
             var pollId = setInterval(function () {
-                if (navigator.onLine) {
-                    fetch('/manifest.json', { cache: 'no-store', mode: 'same-origin' })
-                        .then(function (res) {
-                            if (res.ok) {
-                                clearInterval(pollId);
-                                hint.textContent = 'Back online — reloading…';
-                                hint.classList.add('show');
-                                setTimeout(attemptReload, 400);
-                            }
-                        })
-                        .catch(function () { });
-                }
+                if (navigator.onLine) checkReachable();
             }, 5000);
+
+            // Check once immediately too, in case connectivity was restored
+            // in the instant between the failed navigation and this page painting.
+            checkReachable();
         })();
     </script>
 </body>
