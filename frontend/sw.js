@@ -8,7 +8,7 @@
    - Cross-origin assets (fonts, cdnjs): stale-while-revalidate
 ═══════════════════════════════════════════════════════════════════ */
 
-const VERSION = "v1";
+const VERSION = "v2";
 const STATIC_CACHE = `fetch-static-${VERSION}`;
 const RUNTIME_CACHE = `fetch-runtime-${VERSION}`;
 

@@ -110,6 +110,8 @@ button {
       navBtn: document.getElementById("codeEditorNavBtn"),
       mobBtn: document.getElementById("mobCodeEditorBtn"),
       heroBtn: document.getElementById("heroCodeEditorBtn"),
+      connStatus: document.getElementById("editorConnStatus"),
+      connLabel: document.getElementById("editorConnLabel"),
     };
   }
 
@@ -129,6 +131,17 @@ button {
     } else {
       console.log("[FETCH editor]", msg);
     }
+  }
+
+  /* Mirrors pwa.js's connectivity watcher into the editor's own titlebar
+     chip, since it's easy to lose track of an already-open, full-screen
+     overlay covering the rest of the page (and the top banner) while
+     you're heads-down editing. */
+  function updateConnStatus(online) {
+    if (!els.connStatus) return;
+    els.connStatus.classList.toggle("offline", online === false);
+    if (els.connLabel)
+      els.connLabel.textContent = online === false ? "Offline" : "Online";
   }
 
   /* ══════════════════════════════════════════════
@@ -154,8 +167,27 @@ button {
     });
   }
 
+  let offlineFallbackNotified = false;
   function ensureCodeMirror() {
     if (cmLoading) return cmLoading;
+
+    // window.fetchIsOnline is maintained by pwa.js's connectivity watcher.
+    // If we already know we're offline, don't even attempt the cdnjs
+    // request — let it fail fast to the textarea fallback instead of
+    // waiting out a network timeout. init() re-triggers this the moment
+    // connectivity comes back (see the fetch:connectivity listener below).
+    if (window.fetchIsOnline === false) {
+      if (!offlineFallbackNotified) {
+        offlineFallbackNotified = true;
+        toast(
+          "Offline — editing with plain text for now, syntax highlighting will kick in once you're back online",
+          "info",
+        );
+      }
+      cmLoading = Promise.resolve();
+      return cmLoading;
+    }
+
     const base = `https://cdnjs.cloudflare.com/ajax/libs/codemirror/${CM_VERSION}`;
     cmLoading = Promise.all([
       loadStyle(`${base}/codemirror.min.css`),
@@ -506,6 +538,10 @@ ${scriptTag}
     els.previewPane.classList.toggle("stacked-hidden", view !== "preview");
     els.viewCodeBtn.classList.toggle("active", view === "code");
     els.viewPreviewBtn.classList.toggle("active", view === "preview");
+    els.viewCodeBtn.setAttribute("aria-checked", String(view === "code"));
+    els.viewPreviewBtn.setAttribute("aria-checked", String(view === "preview"));
+    // Drives the sliding thumb — see .editor-view-lever[data-active] in style.css
+    if (els.stackedToggle) els.stackedToggle.dataset.active = view;
     if (view === "preview") runPreview();
   }
 
@@ -778,6 +814,24 @@ ${scriptTag}
     );
 
     window.addEventListener("resize", checkStackedLayout);
+
+    // Reflect live connectivity in the titlebar chip, and retry the
+    // CodeMirror load the instant we're back online if it fell back
+    // to plain textareas while offline.
+    updateConnStatus(window.fetchIsOnline);
+    window.addEventListener("fetch:connectivity", (e) => {
+      const online = e.detail && e.detail.online;
+      updateConnStatus(online);
+      if (online && !cmReady) {
+        cmLoading = null; // allow ensureCodeMirror() to actually retry
+        ensureCodeMirror().then(() => {
+          if (isOpen) {
+            initCodeMirrorInstances();
+            switchFile(activeFile);
+          }
+        });
+      }
+    });
 
     document.addEventListener("keydown", (e) => {
       if (!isOpen) return;
