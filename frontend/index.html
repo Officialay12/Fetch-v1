@@ -7,6 +7,23 @@
     <meta name="description"
         content="FETCH v2.0.0 — Scrape any website and extract its exact HTML, CSS, JS and assets. Built by ayocodes.">
     <title>FETCH v2.0 Web Code Extractor & JS Deobfuscator</title>
+
+    <!-- PWA-mode detection — runs before first paint so the installed app
+         never flashes the marketing sections before they're hidden. -->
+    <script>
+        (function () {
+            try {
+                var standalone =
+                    (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) ||
+                    window.navigator.standalone === true ||
+                    document.referrer.indexOf("android-app://") === 0;
+                var pwaParam = /[?&]source=pwa\b/.test(location.search);
+                if (standalone || pwaParam) {
+                    document.documentElement.classList.add("pwa-mode");
+                }
+            } catch (e) { /* noop */ }
+        })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link
         href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,700;1,400&family=Cormorant+Garamond:ital,wght@1,300;1,500&display=swap"
@@ -73,13 +90,16 @@
                 <span class="logo-bracket">[</span>FETCH<span class="logo-bracket">]</span>
             </a>
             <ul class="nav-links" role="list">
-                <li><a href="#how-it-works" class="nav-link">How It Works</a></li>
+                <li data-pwa-hide><a href="#how-it-works" class="nav-link">How It Works</a></li>
                 <li><a href="#deobfuscator" class="nav-link">Deobfuscator</a></li>
                 <li><a href="#demo" class="nav-link">Scraper</a></li>
-                <li><a href="#features" class="nav-link">Features</a></li>
-                <li><a href="#about" class="nav-link">About</a></li>
+                <li data-pwa-hide><a href="#features" class="nav-link">Features</a></li>
+                <li data-pwa-hide><a href="#about" class="nav-link">About</a></li>
             </ul>
             <div class="nav-actions">
+                <button id="codeEditorNavBtn" class="theme-btn" aria-label="Open Code Editor" title="Code Editor">
+                    <i class="fa-solid fa-code"></i>
+                </button>
                 <button id="addToBrowserBtn" class="add-to-browser-btn" aria-label="Add FETCH to your browser"
                     title="Add FETCH as a browser extension" style="display:none;">
                     <i class="fa-solid fa-puzzle-piece" aria-hidden="true"></i>
@@ -115,11 +135,13 @@
                         <i class="fa-solid fa-download"></i> Install App
                     </a>
                 </li>
-                <li><a href="#how-it-works" class="mob-link">How It Works</a></li>
+                <li><a href="#" id="mobCodeEditorBtn" class="mob-link"><i class="fa-solid fa-code"></i> Code Editor</a>
+                </li>
+                <li data-pwa-hide><a href="#how-it-works" class="mob-link">How It Works</a></li>
                 <li><a href="#deobfuscator" class="mob-link">Deobfuscator</a></li>
                 <li><a href="#demo" class="mob-link">Scraper</a></li>
-                <li><a href="#features" class="mob-link">Features</a></li>
-                <li><a href="#about" class="mob-link">About</a></li>
+                <li data-pwa-hide><a href="#features" class="mob-link">Features</a></li>
+                <li data-pwa-hide><a href="#about" class="mob-link">About</a></li>
                 <li>
                     <a href="#demo" class="mob-link mob-cta">
                         <i class="fa-solid fa-bolt"></i> Launch App
@@ -233,9 +255,12 @@
                 <a href="#demo" class="btn-secondary btn-large">
                     <i class="fa-solid fa-globe"></i> Try Scraper
                 </a>
+                <button type="button" id="heroCodeEditorBtn" class="btn-secondary btn-large">
+                    <i class="fa-solid fa-code"></i> Code Editor
+                </button>
             </div>
 
-            <div class="hero-stats reveal-up" style="--delay:1s">
+            <div class="hero-stats reveal-up" style="--delay:1s" data-pwa-hide>
                 <div class="stat">
                     <span class="stat-num" data-count="100">0</span><span>+</span>
                     <span class="stat-label">Sites Fetched</span>
@@ -258,7 +283,7 @@
     </section>
 
     <!-- ══════════════ HOW IT WORKS ══════════════ -->
-    <section id="how-it-works" class="how-section" aria-label="How FETCH works">
+    <section id="how-it-works" class="how-section" aria-label="How FETCH works" data-pwa-hide>
         <div class="container">
             <div class="section-header">
                 <p class="section-label reveal-up">// process</p>
@@ -506,6 +531,11 @@
                             <span class="tab-badge" id="assetsBadge">—</span>
                         </button>
                         <div class="tab-actions">
+                            <button class="icon-btn add-to-editor-btn" id="addToEditorBtn" title="Open in Code Editor"
+                                aria-label="Add to Code Editor">
+                                <i class="fa-solid fa-code"></i>
+                                <span class="add-to-editor-label">Edit</span>
+                            </button>
                             <button class="icon-btn" id="copyBtn" title="Copy current tab" aria-label="Copy code">
                                 <i class="fa-regular fa-copy"></i>
                             </button>
@@ -620,7 +650,7 @@
     </section>
 
     <!-- ══════════════ FEATURES ══════════════ -->
-    <section id="features" class="features-section" aria-label="FETCH features">
+    <section id="features" class="features-section" aria-label="FETCH features" data-pwa-hide>
         <div class="container">
             <div class="section-header">
                 <p class="section-label reveal-up">// capabilities</p>
@@ -670,7 +700,7 @@
     </section>
 
     <!-- ══════════════ MARQUEE / LANGUAGES ══════════════ -->
-    <section class="langs-section" aria-label="Supported technologies">
+    <section class="langs-section" aria-label="Supported technologies" data-pwa-hide>
         <div class="langs-marquee-wrap">
             <div class="langs-track" aria-hidden="true">
                 <span>🌐 HTML5</span>
@@ -710,7 +740,7 @@
     </section>
 
     <!-- ══════════════ ABOUT ══════════════ -->
-    <section id="about" class="about-section" aria-label="About FETCH">
+    <section id="about" class="about-section" aria-label="About FETCH" data-pwa-hide>
         <div class="container">
             <div class="about-inner">
                 <div class="about-left reveal-left">
@@ -772,7 +802,7 @@
                     </div>
                     <p>by ayocodes — scrape · deobfuscate · extract</p>
                 </div>
-                <div class="footer-links">
+                <div class="footer-links" data-pwa-hide>
                     <div class="footer-col">
                         <h4>Tools</h4>
                         <a href="#deobfuscator">JS Deobfuscator</a>
@@ -821,10 +851,160 @@
     <!-- TOAST -->
     <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
+    <!-- ══════════════ CODE EDITOR ══════════════ -->
+    <div class="editor-overlay" id="editorOverlay" aria-hidden="true" role="dialog" aria-modal="true"
+        aria-label="FETCH Code Editor">
+        <div class="editor-shell" id="editorShell">
+
+            <div class="editor-titlebar">
+                <div class="editor-dots" aria-hidden="true">
+                    <span class="dot dot-red"></span><span class="dot dot-yellow"></span><span
+                        class="dot dot-green"></span>
+                </div>
+                <div class="editor-title-info">
+                    <i class="fa-solid fa-code" aria-hidden="true"></i>
+                    <input type="text" id="editorProjectName" class="editor-project-name" value="untitled-project"
+                        spellcheck="false" autocomplete="off" aria-label="Project name">
+                </div>
+                <div class="editor-titlebar-actions">
+                    <select id="editorProjectSelect" class="editor-select" title="Saved projects"
+                        aria-label="Saved projects">
+                        <option value="">— Saved Projects —</option>
+                    </select>
+                    <button class="icon-btn" id="editorSaveBtn" title="Save project (Ctrl+S)" aria-label="Save project">
+                        <i class="fa-solid fa-floppy-disk"></i>
+                    </button>
+                    <button class="icon-btn" id="editorNewBtn" title="New blank project" aria-label="New project">
+                        <i class="fa-solid fa-file-circle-plus"></i>
+                    </button>
+                    <button class="icon-btn" id="editorDeleteBtn" title="Delete this saved project"
+                        aria-label="Delete project">
+                        <i class="fa-solid fa-trash"></i>
+                    </button>
+                    <button class="icon-btn" id="editorDownloadBtn" title="Download as ZIP" aria-label="Download ZIP">
+                        <i class="fa-solid fa-download"></i>
+                    </button>
+                    <button class="icon-btn" id="editorFullscreenBtn" title="Fullscreen" aria-label="Fullscreen editor">
+                        <i class="fa-solid fa-expand"></i>
+                    </button>
+                    <button class="icon-btn editor-close-btn" id="editorCloseBtn" title="Close (Esc)"
+                        aria-label="Close editor">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="editor-stacked-toggle" id="editorStackedToggle">
+                <button class="stacked-toggle-btn active" data-view="code" id="editorViewCodeBtn">
+                    <i class="fa-solid fa-code"></i> Code
+                </button>
+                <button class="stacked-toggle-btn" data-view="preview" id="editorViewPreviewBtn">
+                    <i class="fa-solid fa-eye"></i> Preview
+                </button>
+            </div>
+
+            <div class="editor-body" id="editorBody">
+
+                <div class="editor-pane" id="editorPane">
+                    <div class="editor-file-tabs" role="tablist">
+                        <button class="editor-file-tab active" data-file="html" role="tab" aria-selected="true">
+                            <i class="fa-brands fa-html5"></i> index.html
+                        </button>
+                        <button class="editor-file-tab" data-file="css" role="tab" aria-selected="false">
+                            <i class="fa-brands fa-css3-alt"></i> styles.css
+                        </button>
+                        <button class="editor-file-tab" data-file="js" role="tab" aria-selected="false">
+                            <i class="fa-brands fa-js"></i> script.js
+                        </button>
+                        <button class="editor-file-tab editor-console-tab" id="editorConsoleTabBtn" data-file="console"
+                            role="tab" aria-selected="false">
+                            <i class="fa-solid fa-terminal"></i> Console
+                            <span class="console-badge hidden" id="consoleBadge">0</span>
+                        </button>
+                    </div>
+
+                    <div class="editor-code-wrap" id="editorCodeWrapHtml">
+                        <textarea id="editorTextareaHtml" class="editor-textarea" spellcheck="false"
+                            aria-label="HTML editor"></textarea>
+                    </div>
+                    <div class="editor-code-wrap hidden" id="editorCodeWrapCss">
+                        <textarea id="editorTextareaCss" class="editor-textarea" spellcheck="false"
+                            aria-label="CSS editor"></textarea>
+                    </div>
+                    <div class="editor-code-wrap hidden" id="editorCodeWrapJs">
+                        <textarea id="editorTextareaJs" class="editor-textarea" spellcheck="false"
+                            aria-label="JavaScript editor"></textarea>
+                    </div>
+
+                    <div class="editor-console-panel hidden" id="editorConsolePanel">
+                        <div class="console-header">
+                            <span>Console output from preview</span>
+                            <button class="text-btn" id="consoleClearBtn"><i class="fa-solid fa-ban"></i> Clear</button>
+                        </div>
+                        <div class="console-log" id="consoleLog">
+                            <div class="console-empty">Logs from your preview's <code>console.log</code>,
+                                <code>warn</code> and <code>error</code> will show up here.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="editor-resizer" id="editorResizer" aria-hidden="true"></div>
+
+                <div class="editor-preview-pane" id="editorPreviewPane">
+                    <div class="editor-preview-bar">
+                        <div class="device-toggle" role="group" aria-label="Preview size">
+                            <button class="device-btn active" data-device="full" title="Full width"
+                                aria-label="Full width preview">
+                                <i class="fa-solid fa-desktop"></i>
+                            </button>
+                            <button class="device-btn" data-device="tablet" title="Tablet width"
+                                aria-label="Tablet preview">
+                                <i class="fa-solid fa-tablet-screen-button"></i>
+                            </button>
+                            <button class="device-btn" data-device="mobile" title="Mobile width"
+                                aria-label="Mobile preview">
+                                <i class="fa-solid fa-mobile-screen-button"></i>
+                            </button>
+                        </div>
+                        <div class="editor-preview-actions">
+                            <label class="toggle-wrap" title="Re-run preview automatically as you type">
+                                <input type="checkbox" id="editorAutoRun" checked>
+                                <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                                <span class="toggle-label">Auto-run</span>
+                            </label>
+                            <button class="icon-btn" id="editorRunBtn" title="Run preview (Ctrl+Enter)"
+                                aria-label="Run preview">
+                                <i class="fa-solid fa-play"></i>
+                            </button>
+                            <button class="icon-btn" id="editorPopoutBtn" title="Open preview in new tab"
+                                aria-label="Open preview in new tab">
+                                <i class="fa-solid fa-up-right-from-square"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="editor-preview-frame-wrap" id="editorPreviewFrameWrap">
+                        <iframe id="editorPreviewFrame" title="Live preview"
+                            sandbox="allow-scripts allow-forms allow-modals allow-popups allow-pointer-lock"></iframe>
+                    </div>
+                </div>
+            </div>
+
+            <div class="editor-statusbar">
+                <span id="editorStatusMsg">Ready</span>
+                <span class="editor-statusbar-right">
+                    <span id="editorCharCount">0 chars</span>
+                    <span class="editor-shortcut-hint">Ctrl+S save · Ctrl+Enter run · Esc close</span>
+                </span>
+            </div>
+        </div>
+    </div>
+
     <!-- SCRIPTS -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="script.js"></script>
+    <script src="editor.js"></script>
     <script src="pwa.js"></script>
     <script src="extension-promo.js"></script>
 </body>

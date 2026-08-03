@@ -360,6 +360,7 @@ body.cursor-click .cursor-ring {
     align-items: center;
     gap: 0.75rem;
 }
+
 /* These are the critical profile panel styles - make sure they're in your CSS */
 
 .profile-nav-btn {
@@ -661,6 +662,7 @@ body.cursor-click .cursor-ring {
         width: 100vw;
     }
 }
+
 .theme-btn {
     width: 38px;
     height: 38px;
@@ -867,6 +869,7 @@ body.cursor-click .cursor-ring {
 }
 
 @keyframes glowFloat {
+
     0%,
     100% {
         transform: translateY(0px) scale(1);
@@ -911,6 +914,7 @@ body.cursor-click .cursor-ring {
 }
 
 @keyframes pulse {
+
     0%,
     100% {
         box-shadow: 0 0 8px var(--lime);
@@ -1088,7 +1092,7 @@ body.cursor-click .cursor-ring {
     display: inline;
 }
 
-.stat > span:nth-child(2) {
+.stat>span:nth-child(2) {
     font-size: 1.5rem;
     font-weight: 800;
     color: var(--cyan);
@@ -1135,6 +1139,7 @@ body.cursor-click .cursor-ring {
 }
 
 @keyframes scrollAnim {
+
     0%,
     100% {
         transform: scaleY(1);
@@ -1806,6 +1811,7 @@ body.cursor-click .cursor-ring {
 }
 
 @keyframes ripple {
+
     0%,
     100% {
         transform: scale(1);
@@ -1878,6 +1884,7 @@ body.cursor-click .cursor-ring {
 }
 
 @keyframes blink {
+
     0%,
     90%,
     100% {
@@ -2557,6 +2564,7 @@ body.cursor-click .cursor-ring {
 }
 
 @keyframes blink-cursor {
+
     0%,
     100% {
         opacity: 1;
@@ -3191,6 +3199,7 @@ mark.search-highlight {
         display: none;
     }
 }
+
 /* ── TOOL BADGE & DIVIDER ── */
 .tool-badge {
     display: inline-flex;
@@ -3587,6 +3596,7 @@ mark.search-highlight {
         display: none;
     }
 }
+
 /* ── STANDALONE DEOBFUSCATOR SECTION ── */
 .deobfuscator-section {
     padding: 6rem 0;
@@ -3694,7 +3704,8 @@ mark.search-highlight {
     gap: 0.75rem;
 }
 
-.clear-btn-small, .upload-btn-small {
+.clear-btn-small,
+.upload-btn-small {
     background: var(--surface2);
     border: 1px solid var(--border);
     padding: 0.3rem 0.8rem;
@@ -3706,7 +3717,8 @@ mark.search-highlight {
     font-family: var(--font-mono);
 }
 
-.clear-btn-small:hover, .upload-btn-small:hover {
+.clear-btn-small:hover,
+.upload-btn-small:hover {
     border-color: var(--cyan);
     color: var(--cyan);
     background: var(--cyan-dim);
@@ -3914,7 +3926,8 @@ mark.search-highlight {
         align-items: center;
     }
 
-    .btn-large, .btn-secondary {
+    .btn-large,
+    .btn-secondary {
         width: 100%;
         justify-content: center;
     }
@@ -3923,7 +3936,8 @@ mark.search-highlight {
         flex-direction: column;
     }
 
-    .deobfuscate-standalone-btn, .example-btn {
+    .deobfuscate-standalone-btn,
+    .example-btn {
         width: 100%;
         justify-content: center;
     }
@@ -3946,6 +3960,7 @@ mark.search-highlight {
    is focused — any font-size under 16px on a text input
    triggers it. Keeps the mono look, just bumps the size. */
 @media (max-width: 768px) {
+
     .url-input,
     .app-url-input,
     #obfuscatedInput,
@@ -3960,6 +3975,7 @@ mark.search-highlight {
    flipped back at <=480px, leaving a dead zone between
    481–640px with no visible cursor on non-touch devices. */
 @media (max-width: 640px) {
+
     body,
     button {
         cursor: auto;
@@ -4054,6 +4070,7 @@ mark.search-highlight {
 /* Hero buttons already stack at 768px — make sure their
    tap target height stays comfortable when stacked. */
 @media (max-width: 768px) {
+
     .btn-large,
     .btn-secondary {
         min-height: 48px;
@@ -4171,6 +4188,7 @@ button,
    and never appears in the mobile hamburger menu.
 ═══════════════════════════════════════════════════ */
 @media (max-width: 1180px) {
+
     /* Give the nav a bit more breathing room once the new
        button is in play, before things start wrapping. */
     .nav-inner {
@@ -4190,6 +4208,7 @@ button,
    flat. Respects reduced-motion preferences.
 ═══════════════════════════════════════════════════ */
 @media (prefers-reduced-motion: no-preference) {
+
     .btn-primary,
     .fetch-btn,
     .app-fetch-btn,
@@ -4208,12 +4227,10 @@ button,
         left: -60%;
         width: 40%;
         height: 100%;
-        background: linear-gradient(
-            120deg,
-            transparent,
-            rgba(255, 255, 255, 0.16),
-            transparent
-        );
+        background: linear-gradient(120deg,
+                transparent,
+                rgba(255, 255, 255, 0.16),
+                transparent);
         transform: skewX(-20deg);
         animation: fetchShimmer 5s ease-in-out infinite;
         pointer-events: none;
@@ -4223,9 +4240,11 @@ button,
         0% {
             left: -60%;
         }
+
         12% {
             left: 130%;
         }
+
         100% {
             left: 130%;
         }
@@ -4250,5 +4269,574 @@ button,
 
     .scroll-indicator {
         display: none;
+    }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   PWA-MODE — hide marketing-only sections once FETCH is installed
+   as an app. Toggled by the inline script in <head> of index.html
+   (adds .pwa-mode on <html> before first paint).
+═══════════════════════════════════════════════════════════════════ */
+.pwa-mode [data-pwa-hide] {
+    display: none !important;
+}
+
+/* When the marketing nav links are gone, tighten up the remaining
+   ones instead of leaving a big gap. */
+.pwa-mode .nav-links {
+    gap: 1.75rem;
+}
+
+/* Hero breathes a little less once the stat counters are gone. */
+.pwa-mode .hero {
+    padding-bottom: 3rem;
+}
+
+.pwa-mode .footer-top {
+    justify-content: center;
+    text-align: center;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   "Add to Code Editor" button (lives in the scraper's tab-actions row)
+═══════════════════════════════════════════════════════════════════ */
+.add-to-editor-btn {
+    width: auto !important;
+    padding: 0 0.65rem !important;
+    gap: 0.4rem;
+    color: var(--cyan) !important;
+    border: 1px solid rgba(0, 229, 255, 0.3) !important;
+}
+
+.add-to-editor-label {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 700;
+}
+
+@media (max-width: 640px) {
+    .add-to-editor-label {
+        display: none;
+    }
+
+    .add-to-editor-btn {
+        padding: 0 0.5rem !important;
+    }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   CODE EDITOR — full-screen overlay
+═══════════════════════════════════════════════════════════════════ */
+.editor-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100000;
+    background: rgba(3, 5, 7, 0.85);
+    backdrop-filter: blur(6px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: clamp(0px, 2vw, 22px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+}
+
+.editor-overlay.open {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.editor-shell {
+    width: 100%;
+    height: 100%;
+    max-width: 1500px;
+    max-height: 940px;
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    box-shadow: 0 30px 100px rgba(0, 0, 0, 0.6);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transform: translateY(14px) scale(0.985);
+    transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.editor-overlay.open .editor-shell {
+    transform: translateY(0) scale(1);
+}
+
+.editor-shell:fullscreen {
+    max-width: none;
+    max-height: none;
+    border-radius: 0;
+}
+
+/* ── titlebar ── */
+.editor-titlebar {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    padding: 0.65rem 1rem;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.editor-dots {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.editor-title-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--cyan);
+    min-width: 0;
+}
+
+.editor-project-name {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    font-weight: 600;
+    padding: 0.3rem 0.5rem;
+    border-radius: 6px;
+    min-width: 90px;
+    max-width: 240px;
+}
+
+.editor-project-name:hover,
+.editor-project-name:focus {
+    border-color: var(--border2);
+    background: var(--surface2);
+    outline: none;
+}
+
+.editor-titlebar-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-shrink: 0;
+}
+
+.editor-select {
+    background: var(--surface2);
+    color: var(--text2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.4rem 0.5rem;
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    max-width: 150px;
+}
+
+.editor-close-btn:hover {
+    color: var(--red) !important;
+    border-color: var(--red) !important;
+}
+
+/* ── stacked (narrow-screen) view toggle ── */
+.editor-stacked-toggle {
+    display: none;
+    gap: 0.4rem;
+    padding: 0.5rem 1rem;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.editor-stacked-toggle.hidden {
+    display: none !important;
+}
+
+.stacked-toggle-btn {
+    flex: 1;
+    padding: 0.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text2);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.stacked-toggle-btn.active {
+    color: #030507;
+    background: var(--cyan);
+    border-color: var(--cyan);
+}
+
+/* ── body: editor pane | resizer | preview pane ── */
+.editor-body {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+}
+
+.editor-pane {
+    flex: 0 0 50%;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+}
+
+.editor-resizer {
+    width: 5px;
+    flex-shrink: 0;
+    cursor: col-resize;
+    background: var(--border);
+    position: relative;
+}
+
+.editor-resizer:hover,
+.editor-resizer:active {
+    background: var(--cyan);
+}
+
+.editor-preview-pane {
+    flex: 0 0 50%;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+}
+
+/* ── file tabs ── */
+.editor-file-tabs {
+    display: flex;
+    align-items: center;
+    gap: 0.2rem;
+    padding: 0.5rem 0.6rem 0;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.editor-file-tab {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.55rem 0.85rem;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text2);
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    border-radius: 8px 8px 0 0;
+    transition: color 0.15s, background 0.15s;
+}
+
+.editor-file-tab:hover {
+    color: var(--text);
+    background: var(--surface2);
+}
+
+.editor-file-tab.active {
+    color: var(--cyan);
+    background: var(--bg2);
+    border-bottom-color: var(--cyan);
+}
+
+.console-badge {
+    background: var(--red);
+    color: #fff;
+    font-size: 0.62rem;
+    font-weight: 800;
+    padding: 0.05rem 0.4rem;
+    border-radius: 100px;
+    line-height: 1.4;
+}
+
+.console-badge.hidden {
+    display: none;
+}
+
+/* ── code area ── */
+.editor-code-wrap {
+    flex: 1;
+    min-height: 0;
+    background: #0a0e14;
+    display: flex;
+}
+
+.editor-code-wrap.hidden {
+    display: none;
+}
+
+.editor-textarea {
+    flex: 1;
+    width: 100%;
+    height: 100%;
+    resize: none;
+    border: none;
+    outline: none;
+    background: #0a0e14;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    line-height: 1.6;
+    padding: 1rem 1.1rem;
+    tab-size: 2;
+}
+
+/* CodeMirror takes over once it loads — make it fill the pane and
+   match the app's dark palette rather than the default theme box. */
+.editor-code-wrap .CodeMirror {
+    flex: 1;
+    height: 100% !important;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    line-height: 1.6;
+    background: #0a0e14;
+}
+
+.editor-code-wrap .CodeMirror-gutters {
+    background: #0a0e14;
+    border-right: 1px solid var(--border);
+}
+
+/* ── console panel ── */
+.editor-console-panel {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: #0a0e14;
+}
+
+.editor-console-panel.hidden {
+    display: none;
+}
+
+.console-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0.9rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--text2);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.console-log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.5rem 0;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+}
+
+.console-empty {
+    padding: 1rem;
+    color: var(--muted);
+    font-size: 0.78rem;
+    line-height: 1.6;
+}
+
+.console-empty code {
+    background: var(--surface2);
+    padding: 0.1rem 0.35rem;
+    border-radius: 4px;
+    color: var(--text2);
+}
+
+.console-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.55rem;
+    padding: 0.4rem 0.9rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    color: var(--text);
+}
+
+.console-row .console-text {
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.console-row.console-warn {
+    color: var(--amber);
+}
+
+.console-row.console-error {
+    color: var(--red);
+}
+
+.console-row i {
+    margin-top: 0.2rem;
+    font-size: 0.75rem;
+    flex-shrink: 0;
+}
+
+/* ── preview bar + iframe ── */
+.editor-preview-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem 0.75rem;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.device-toggle {
+    display: flex;
+    gap: 0.25rem;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.2rem;
+}
+
+.device-btn {
+    width: 30px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: var(--text2);
+    cursor: pointer;
+    font-size: 0.78rem;
+}
+
+.device-btn.active {
+    background: var(--cyan);
+    color: #030507;
+}
+
+.editor-preview-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+}
+
+.editor-preview-frame-wrap {
+    flex: 1;
+    min-height: 0;
+    background: #f0f6fa;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    overflow: auto;
+    padding: 0;
+}
+
+.editor-preview-frame-wrap iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: #fff;
+    transition: width 0.2s ease;
+}
+
+.editor-preview-frame-wrap.device-tablet {
+    padding: 20px 0;
+}
+
+.editor-preview-frame-wrap.device-tablet iframe {
+    width: 768px;
+    height: 100%;
+    max-height: calc(100% - 40px);
+    box-shadow: 0 0 0 1px var(--border), 0 10px 40px rgba(0, 0, 0, 0.3);
+    border-radius: 10px;
+}
+
+.editor-preview-frame-wrap.device-mobile {
+    padding: 20px 0;
+}
+
+.editor-preview-frame-wrap.device-mobile iframe {
+    width: 375px;
+    height: 100%;
+    max-height: calc(100% - 40px);
+    box-shadow: 0 0 0 1px var(--border), 0 10px 40px rgba(0, 0, 0, 0.3);
+    border-radius: 24px;
+}
+
+/* ── statusbar ── */
+.editor-statusbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.4rem 1rem;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    color: var(--text2);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    flex-shrink: 0;
+}
+
+.editor-statusbar-right {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.editor-shortcut-hint {
+    color: var(--muted);
+    display: none;
+}
+
+@media (min-width: 720px) {
+    .editor-shortcut-hint {
+        display: inline;
+    }
+}
+
+/* ── stacked layout for narrow screens ── */
+.editor-body.stacked {
+    flex-direction: column;
+}
+
+.editor-body.stacked .editor-pane,
+.editor-body.stacked .editor-preview-pane {
+    flex: 1 1 auto !important;
+    width: 100%;
+    border-right: none;
+}
+
+.editor-body.stacked .editor-resizer {
+    display: none;
+}
+
+.editor-body.stacked .stacked-hidden {
+    display: none !important;
+}
+
+@media (max-width: 640px) {
+    .editor-titlebar {
+        flex-wrap: wrap;
+        row-gap: 0.5rem;
+    }
+
+    .editor-select {
+        max-width: 100px;
+    }
+
+    .editor-project-name {
+        max-width: 130px;
     }
 }
