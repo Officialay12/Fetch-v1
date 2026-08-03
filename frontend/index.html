@@ -8,6 +8,30 @@
         content="FETCH v2.0.0 — Scrape any website and extract its exact HTML, CSS, JS and assets. Built by ayocodes.">
     <title>FETCH v2.0 Web Code Extractor & JS Deobfuscator</title>
 
+    <!-- Canonical + indexing -->
+    <link rel="canonical" href="https://fetch-liart-gamma.vercel.app/">
+    <meta name="robots" content="index, follow">
+
+    <!-- Open Graph / Facebook, Slack, Discord, LinkedIn link previews -->
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="FETCH">
+    <meta property="og:title" content="FETCH — Web Code Extractor & JS Deobfuscator">
+    <meta property="og:description"
+        content="Scrape any website and extract its exact HTML, CSS, JS and assets, or deobfuscate JavaScript with AI.">
+    <meta property="og:url" content="https://fetch-liart-gamma.vercel.app/">
+    <meta property="og:image" content="https://fetch-liart-gamma.vercel.app/icons/icon-512.png">
+    <meta property="og:image:width" content="512">
+    <meta property="og:image:height" content="512">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:site" content="@sung_tech">
+    <meta name="twitter:creator" content="@sung_tech">
+    <meta name="twitter:title" content="FETCH — Web Code Extractor & JS Deobfuscator">
+    <meta name="twitter:description"
+        content="Scrape any website and extract its exact HTML, CSS, JS and assets, or deobfuscate JavaScript with AI.">
+    <meta name="twitter:image" content="https://fetch-liart-gamma.vercel.app/icons/icon-512.png">
+
     <!-- PWA-mode detection — runs before first paint so the installed app
          never flashes the marketing sections before they're hidden. -->
     <script>
@@ -124,53 +148,60 @@
                 </button>
             </div>
         </div>
-        <!-- MOBILE MENU -->
-        <div class="mobile-menu" id="mobileMenu" role="dialog" aria-label="Mobile navigation" aria-hidden="true">
-            <ul role="list">
-                <li id="pwaInstallMobWrap" style="display:none;">
-                    <a href="#" id="pwaInstallMobBtn" class="mob-link">
-                        <i class="fa-solid fa-download"></i> Install App
-                    </a>
-                </li>
-                <li><a href="#" id="mobCodeEditorBtn" class="mob-link"><i class="fa-solid fa-code"></i> Code Editor</a>
-                </li>
-                <li data-pwa-hide><a href="#how-it-works" class="mob-link">How It Works</a></li>
-                <li><a href="#deobfuscator" class="mob-link">Deobfuscator</a></li>
-                <li><a href="#demo" class="mob-link">Scraper</a></li>
-                <li data-pwa-hide><a href="#features" class="mob-link">Features</a></li>
-                <li data-pwa-hide><a href="#about" class="mob-link">About</a></li>
-                <li>
-                    <a href="#demo" class="mob-link mob-cta">
-                        <i class="fa-solid fa-bolt"></i> Launch App
-                    </a>
-                </li>
-            </ul>
-            <!-- Account row: moved out of the top nav bar on mobile so the
-                 header stays to logo + hamburger only. Mirrors the desktop
-                 theme/profile/logout buttons but as full-width menu rows. -->
-            <div class="mob-menu-divider" aria-hidden="true"></div>
-            <ul class="mob-menu-account">
-                <li>
-                    <a href="#" id="mobProfileBtn" class="mob-link mob-link-sm">
-                        <span class="mob-link-icon"><i class="fa-solid fa-user" id="mobProfileIcon"></i></span>
-                        <span id="mobProfileLabel">Profile</span>
-                    </a>
-                </li>
-                <li>
-                    <a href="#" id="mobThemeToggle" class="mob-link mob-link-sm">
-                        <span class="mob-link-icon"><i class="fa-solid fa-moon" id="mobThemeIcon"></i></span>
-                        <span>Toggle Theme</span>
-                    </a>
-                </li>
-                <li>
-                    <a href="#" id="mobLogoutBtn" class="mob-link mob-link-sm">
-                        <span class="mob-link-icon"><i class="fa-solid fa-sign-out-alt"></i></span>
-                        <span>Logout</span>
-                    </a>
-                </li>
-            </ul>
-        </div>
+        <!-- mobile menu lives outside <nav> now — see below -->
     </nav>
+
+    <!-- MOBILE MENU
+         Deliberately a sibling of <nav>, not nested inside it. #navbar
+         gets `backdrop-filter` once scrolled (see #navbar.scrolled in
+         style.css), and filter/backdrop-filter/transform on an ancestor
+         creates a new containing block for position:fixed descendants —
+         so a fixed-position menu nested inside the navbar would resolve
+         its top/bottom against the ~64px navbar box instead of the
+         viewport once scrolled, collapsing to almost nothing open. Living
+         outside <nav> keeps it fixed to the real viewport at all times. -->
+    <div class="mobile-menu" id="mobileMenu" role="dialog" aria-label="Mobile navigation" aria-hidden="true">
+        <ul role="list">
+            <li id="pwaInstallMobWrap" style="display:none;">
+                <a href="#" id="pwaInstallMobBtn" class="mob-link">
+                    <i class="fa-solid fa-download"></i> Install App
+                </a>
+            </li>
+            <li><a href="#" id="mobCodeEditorBtn" class="mob-link"><i class="fa-solid fa-code"></i> Code Editor</a>
+            </li>
+            <li data-pwa-hide><a href="#how-it-works" class="mob-link">How It Works</a></li>
+            <li><a href="#deobfuscator" class="mob-link">Deobfuscator</a></li>
+            <li><a href="#demo" class="mob-link">Scraper</a></li>
+            <li data-pwa-hide><a href="#features" class="mob-link">Features</a></li>
+            <li data-pwa-hide><a href="#about" class="mob-link">About</a></li>
+            <li>
+                <a href="#demo" class="mob-link mob-cta">
+                    <i class="fa-solid fa-bolt"></i> Launch App
+                </a>
+            </li>
+        </ul>
+        <div class="mob-menu-divider" aria-hidden="true"></div>
+        <ul class="mob-menu-account">
+            <li>
+                <a href="#" id="mobProfileBtn" class="mob-link mob-link-sm">
+                    <span class="mob-link-icon"><i class="fa-solid fa-user" id="mobProfileIcon"></i></span>
+                    <span id="mobProfileLabel">Profile</span>
+                </a>
+            </li>
+            <li>
+                <a href="#" id="mobThemeToggle" class="mob-link mob-link-sm">
+                    <span class="mob-link-icon"><i class="fa-solid fa-moon" id="mobThemeIcon"></i></span>
+                    <span>Toggle Theme</span>
+                </a>
+            </li>
+            <li>
+                <a href="#" id="mobLogoutBtn" class="mob-link mob-link-sm">
+                    <span class="mob-link-icon"><i class="fa-solid fa-sign-out-alt"></i></span>
+                    <span>Logout</span>
+                </a>
+            </li>
+        </ul>
+    </div>
 
     <!-- PROFILE OVERLAY & PANEL -->
     <div id="profileOverlay" class="profile-overlay" aria-hidden="true"></div>
@@ -509,6 +540,14 @@
                         <span id="statusText">Ready. Enter a URL to start.</span>
                         <span class="status-time" id="statusTime"></span>
                     </div>
+                </div>
+
+                <div class="quick-examples" id="quickExamplesRow">
+                    <span class="quick-examples-label">Try an example:</span>
+                    <button type="button" class="quick-example-chip" data-url="https://stripe.com">stripe.com</button>
+                    <button type="button" class="quick-example-chip"
+                        data-url="https://tailwindcss.com">tailwindcss.com</button>
+                    <button type="button" class="quick-example-chip" data-url="https://linear.app">linear.app</button>
                 </div>
 
                 <div class="framework-badge-row" id="frameworkRow">

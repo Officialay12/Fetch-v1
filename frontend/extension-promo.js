@@ -16,6 +16,10 @@
   const DOWNLOAD_FILENAME = "fetch-extension-v1.0.0.zip";
   const DISMISS_KEY = "fetch_ext_promo_dismissed_at";
   const DISMISS_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
+  // Only pitch the extension after someone has actually seen FETCH work —
+  // pitching it before their first successful scrape is asking them to
+  // install something before they know why they'd want it.
+  const HAS_SCRAPED_KEY = "fetch_has_scraped_once";
 
   /* ── only relevant on desktop: fine pointer, wide viewport, non-mobile UA ── */
   function isDesktop() {
@@ -53,10 +57,9 @@
     // dismiss cooldown below.
     wireNavButton();
 
-    // The floating card is a one-time nudge, respects its own cooldown.
-    if (isEligible() && !alreadyDismissedRecently()) {
-      showCTA();
-    }
+    // The floating card is a one-time nudge, respects its own cooldown,
+    // and only appears once the person has actually completed a scrape.
+    maybeShowCTA();
 
     // Re-check on resize/orientation change — e.g. someone maximizes
     // a narrow window, or rotates a tablet into a desktop-like width.
@@ -229,6 +232,17 @@
     document.head.appendChild(style);
   }
 
+  function maybeShowCTA() {
+    if (
+      isEligible() &&
+      !alreadyDismissedRecently() &&
+      localStorage.getItem(HAS_SCRAPED_KEY) &&
+      !document.getElementById("fetch-ext-cta")
+    ) {
+      showCTA();
+    }
+  }
+
   function showCTA() {
     if (document.getElementById("fetch-ext-cta")) return;
     const el = document.createElement("div");
@@ -324,6 +338,9 @@
 
   // Expose for other scripts (or the console) to trigger manually.
   window.openFetchExtensionModal = openModal;
+  // Called by script.js right after a scrape succeeds — re-checks
+  // eligibility now that HAS_SCRAPED_KEY is set for a first-time user.
+  window.fetchExtPromoNotifyScrape = maybeShowCTA;
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);

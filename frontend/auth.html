@@ -6,12 +6,59 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="FETCH v2.0 — Sign in or create an account to start scraping and deobfuscating." />
   <title>FETCH v2.0 — Sign In</title>
+
+  <link rel="canonical" href="https://fetch-liart-gamma.vercel.app/auth.html" />
+  <meta name="robots" content="noindex, follow" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="FETCH" />
+  <meta property="og:title" content="FETCH v2.0 — Sign In" />
+  <meta property="og:description" content="Sign in or create an account to start scraping and deobfuscating." />
+  <meta property="og:url" content="https://fetch-liart-gamma.vercel.app/auth.html" />
+  <meta property="og:image" content="https://fetch-liart-gamma.vercel.app/icons/icon-512.png" />
+
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:site" content="@sung_tech" />
+  <meta name="twitter:title" content="FETCH v2.0 — Sign In" />
+  <meta name="twitter:description" content="Sign in or create an account to start scraping and deobfuscating." />
+  <meta name="twitter:image" content="https://fetch-liart-gamma.vercel.app/icons/icon-512.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link
     href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,700;1,400&family=Cormorant+Garamond:ital,wght@1,300;1,500&display=swap"
     rel="stylesheet" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
   <link rel="stylesheet" href="auth.css" />
+  <!-- Progress bar + elapsed-time readout added to .cold-banner. Kept here
+       inline rather than in auth.css so it ships regardless of that file. -->
+  <style>
+    .cold-banner-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .cold-elapsed {
+      color: #00e5ff;
+      font-weight: 700;
+      margin-left: 0.35rem;
+    }
+
+    .cold-progress-track {
+      margin-top: 0.55rem;
+      height: 4px;
+      border-radius: 100px;
+      background: rgba(0, 229, 255, 0.12);
+      overflow: hidden;
+    }
+
+    .cold-progress-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: 100px;
+      background: #00e5ff;
+      transition: width 1s linear;
+    }
+  </style>
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
@@ -90,8 +137,14 @@
 
             <!-- Cold-start banner -->
             <div class="cold-banner" id="coldBannerLogin">
-              <i class="fa-solid fa-circle-notch" aria-hidden="true"></i>
-              <span>Backend is waking up (Render cold start). This may take ~30 s — please wait…</span>
+              <div class="cold-banner-row">
+                <i class="fa-solid fa-circle-notch" aria-hidden="true"></i>
+                <span>Backend is waking up (Render cold start) — usually ~30 s<span class="cold-elapsed"
+                    id="coldTimeLogin"></span></span>
+              </div>
+              <div class="cold-progress-track">
+                <div class="cold-progress-fill" id="coldProgressLogin"></div>
+              </div>
             </div>
 
             <!-- Google -->
@@ -167,8 +220,14 @@
 
             <!-- Cold-start banner -->
             <div class="cold-banner" id="coldBannerRegister">
-              <i class="fa-solid fa-circle-notch" aria-hidden="true"></i>
-              <span>Backend is waking up (Render cold start). This may take ~30 s — please wait…</span>
+              <div class="cold-banner-row">
+                <i class="fa-solid fa-circle-notch" aria-hidden="true"></i>
+                <span>Backend is waking up (Render cold start) — usually ~30 s<span class="cold-elapsed"
+                    id="coldTimeRegister"></span></span>
+              </div>
+              <div class="cold-progress-track">
+                <div class="cold-progress-fill" id="coldProgressRegister"></div>
+              </div>
             </div>
 
             <!-- Google -->

@@ -1622,6 +1622,53 @@ body.cursor-click .cursor-ring {
     margin-left: auto;
 }
 
+/* Quick-start example chips — shown to first-time visitors so the empty
+   URL input isn't a blank page with no obvious next move. Hidden for
+   good (via JS, localStorage-gated) after someone's first successful
+   scrape, so it never nags a returning user. */
+.quick-examples {
+    padding: 0.6rem 1.25rem 0;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.quick-examples.hidden {
+    display: none;
+}
+
+.quick-examples-label {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--muted);
+}
+
+.quick-example-chip {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text2);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    padding: 0.3rem 0.8rem;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.quick-example-chip:hover {
+    color: var(--cyan);
+    border-color: var(--cyan);
+    background: var(--cyan-dim);
+}
+
+@media (max-width: 480px) {
+    .quick-examples-label {
+        width: 100%;
+    }
+}
+
 /* Framework Badge Row — FIX: stable min-height */
 .framework-badge-row {
     padding: 0.5rem 1.25rem;
@@ -4516,21 +4563,44 @@ button,
 
 .stacked-toggle-btn {
     flex: 1;
+    min-height: 44px;
     padding: 0.5rem;
     border-radius: 8px;
     border: 1px solid var(--border);
     background: var(--surface2);
     color: var(--text2);
     font-family: var(--font-mono);
-    font-size: 0.75rem;
+    font-size: 0.8rem;
     font-weight: 700;
     cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.1s;
+}
+
+.stacked-toggle-btn:active {
+    transform: scale(0.97);
 }
 
 .stacked-toggle-btn.active {
     color: #030507;
     background: var(--cyan);
     border-color: var(--cyan);
+    box-shadow: 0 2px 12px rgba(0, 229, 255, 0.25);
+}
+
+/* Whichever pane is showing gets a quick fade+rise so the code/preview
+   swap doesn't feel like an abrupt cut. */
+@keyframes editorPaneIn {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.editor-body.stacked .editor-pane:not(.stacked-hidden),
+.editor-body.stacked .editor-preview-pane:not(.stacked-hidden) {
+    animation: editorPaneIn 0.18s ease-out;
 }
 
 /* ── body: editor pane | resizer | preview pane ── */

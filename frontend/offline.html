@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <title>You're offline — FETCH</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png">
+
+    <!--
+    Deliberately self-contained: this page is served straight from the
+    service worker cache when the network is down, so it can't lean on
+    style.css, Google Fonts, or Font Awesome finishing a network request —
+    all of that would just hang right when we most need this to render fast.
+  -->
+    <style>
+        :root {
+            --bg: #030507;
+            --surface: #0c1a23;
+            --border: #1a2d3a;
+            --cyan: #00e5ff;
+            --text: #ddeef5;
+            --text2: #7aa3b5;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            height: 100%;
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+        }
+
+        body {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            text-align: center;
+        }
+
+        .wrap {
+            max-width: 420px;
+        }
+
+        .logo {
+            font-size: 1.1rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            color: var(--text);
+            margin-bottom: 2rem;
+        }
+
+        .logo .bracket {
+            color: var(--cyan);
+        }
+
+        .icon-ring {
+            width: 84px;
+            height: 84px;
+            margin: 0 auto 1.75rem;
+            border-radius: 50%;
+            border: 1.5px solid var(--border);
+            background: var(--surface);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .icon-ring svg {
+            width: 36px;
+            height: 36px;
+        }
+
+        h1 {
+            font-size: 1.3rem;
+            margin: 0 0 0.6rem;
+            color: #fff;
+        }
+
+        p {
+            font-size: 0.88rem;
+            line-height: 1.6;
+            color: var(--text2);
+            margin: 0 0 1.75rem;
+        }
+
+        button {
+            font-family: inherit;
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: #030507;
+            background: var(--cyan);
+            border: none;
+            border-radius: 10px;
+            padding: 0.75rem 1.4rem;
+            cursor: pointer;
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        .hint {
+            margin-top: 1.5rem;
+            font-size: 0.72rem;
+            color: #3d606e;
+        }
+
+        .hint.show {
+            color: var(--cyan);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="wrap">
+        <div class="logo"><span class="bracket">[</span>FETCH<span class="bracket">]</span></div>
+
+        <div class="icon-ring" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#7aa3b5" stroke-width="1.6">
+                <path d="M1 9a16 16 0 0 1 22 0M5 13a10.5 10.5 0 0 1 14 0M8.5 17a5.5 5.5 0 0 1 7 0"
+                    stroke-linecap="round" />
+                <line x1="2" y1="2" x2="22" y2="22" stroke="#ff4060" stroke-linecap="round" />
+                <circle cx="12" cy="20.5" r="1.1" fill="#7aa3b5" stroke="none" />
+            </svg>
+        </div>
+
+        <h1>You're offline</h1>
+        <p id="statusMsg">Can't reach the network right now. Check your connection — this page will reconnect
+            automatically.</p>
+
+        <button id="retryBtn" type="button">Try again</button>
+        <div class="hint" id="hint">Waiting for connection…</div>
+    </div>
+
+    <script>
+        (function () {
+            var hint = document.getElementById('hint');
+            var msg = document.getElementById('statusMsg');
+            var retryBtn = document.getElementById('retryBtn');
+
+            function attemptReload() {
+                window.location.reload();
+            }
+
+            retryBtn.addEventListener('click', attemptReload);
+
+            // Auto-retry the moment the browser reports we're back online.
+            window.addEventListener('online', function () {
+                hint.textContent = 'Back online — reloading…';
+                hint.classList.add('show');
+                msg.textContent = "You're back online!";
+                setTimeout(attemptReload, 600);
+            });
+
+            // Belt-and-suspenders poll, since 'online' isn't always reliable
+            // on flaky connections (e.g. captive portals, spotty mobile signal).
+            var pollId = setInterval(function () {
+                if (navigator.onLine) {
+                    fetch('/manifest.json', { cache: 'no-store', mode: 'same-origin' })
+                        .then(function (res) {
+                            if (res.ok) {
+                                clearInterval(pollId);
+                                hint.textContent = 'Back online — reloading…';
+                                hint.classList.add('show');
+                                setTimeout(attemptReload, 400);
+                            }
+                        })
+                        .catch(function () { });
+                }
+            }, 5000);
+        })();
+    </script>
+</body>
+
+</html>

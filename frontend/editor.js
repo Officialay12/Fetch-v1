@@ -266,6 +266,13 @@ button {
       btn.setAttribute("aria-selected", String(isActive));
     });
 
+    // On mobile the code pane and preview each take the full screen —
+    // if the preview is currently in front, tapping a file tab should
+    // bring the code pane forward so the tab you tapped is visible.
+    if (els.body.classList.contains("stacked") && stackedView !== "code") {
+      setStackedView("code");
+    }
+
     const showConsole = file === "console";
     els.consolePanel.classList.toggle("hidden", !showConsole);
     els.wrapHtml.classList.toggle("hidden", showConsole || file !== "html");
@@ -482,12 +489,19 @@ ${scriptTag}
   /* ══════════════════════════════════════════════
      Stacked (narrow-screen) view toggle
   ══════════════════════════════════════════════ */
+  let stackedView = "code";
   function checkStackedLayout() {
     const stacked = window.innerWidth < 880;
     els.body.classList.toggle("stacked", stacked);
     els.stackedToggle.classList.toggle("hidden", !stacked);
+    // Re-apply whichever view (code/preview) is current so the panes are
+    // correctly shown/hidden the moment we enter stacked mode. Without this,
+    // opening the editor (or resizing into) a narrow viewport left both
+    // panes visible, split 50/50, until the user tapped a toggle button.
+    if (stacked) setStackedView(stackedView);
   }
   function setStackedView(view) {
+    stackedView = view;
     els.pane.classList.toggle("stacked-hidden", view !== "code");
     els.previewPane.classList.toggle("stacked-hidden", view !== "preview");
     els.viewCodeBtn.classList.toggle("active", view === "code");

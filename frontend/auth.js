@@ -95,20 +95,46 @@ async function checkBackendHealth() {
   } catch (_) {}
 
   coldStartDetected = true;
+  const startedAt = Date.now();
   ["coldBannerLogin", "coldBannerRegister"].forEach((id) => {
     const el = $(id);
     if (el) el.classList.add("show");
   });
+
+  // A static "please wait ~30s" banner gives no feedback on whether
+  // anything is actually happening. Tick an elapsed-time readout and an
+  // asymptotic progress bar (creeps to ~90% over the typical ~30s cold
+  // start, then snaps to 100% the instant the health check succeeds) so
+  // the wait feels tracked instead of frozen.
+  const tick = setInterval(() => {
+    const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+    const pct = Math.min(90, (elapsedSec / 30) * 90);
+    ["coldProgressLogin", "coldProgressRegister"].forEach((id) => {
+      const bar = $(id);
+      if (bar) bar.style.width = pct + "%";
+    });
+    ["coldTimeLogin", "coldTimeRegister"].forEach((id) => {
+      const el = $(id);
+      if (el) el.textContent = ` (${elapsedSec}s)`;
+    });
+  }, 1000);
 
   const poll = setInterval(async () => {
     try {
       const r = await fetchWithTimeout(`${BACKEND_URL}/health`, {}, 6000);
       if (r.ok) {
         clearInterval(poll);
-        ["coldBannerLogin", "coldBannerRegister"].forEach((id) => {
-          const el = $(id);
-          if (el) el.classList.remove("show");
+        clearInterval(tick);
+        ["coldProgressLogin", "coldProgressRegister"].forEach((id) => {
+          const bar = $(id);
+          if (bar) bar.style.width = "100%";
         });
+        setTimeout(() => {
+          ["coldBannerLogin", "coldBannerRegister"].forEach((id) => {
+            const el = $(id);
+            if (el) el.classList.remove("show");
+          });
+        }, 300);
         coldStartDetected = false;
         showToast("Backend is ready!", "success");
         loadConfig();

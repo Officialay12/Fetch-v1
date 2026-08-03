@@ -1061,8 +1061,12 @@ async function startFetch(source) {
     return;
   }
 
+  let _timedOut = false;
   try {
-    const timeoutId = setTimeout(() => _abortController.abort(), 35000);
+    const timeoutId = setTimeout(() => {
+      _timedOut = true;
+      _abortController.abort();
+    }, 35000);
 
     const resp = await fetch(`${BACKEND_URL}/api/fetch`, {
       method: "POST",
@@ -1101,13 +1105,37 @@ async function startFetch(source) {
       `✓ done — ${getDomain(url)} extracted in ${data.stats?.fetchTimeMs || 0}ms`,
     );
     showToast(`✅ ${getDomain(url)} fetched`, "success");
+
+    $("quickExamplesRow")?.classList.add("hidden");
+
+    // First successful scrape unlocks the "Add to Browser" floating CTA —
+    // see extension-promo.js. Pitching the extension only after someone
+    // has seen FETCH actually work is a much better first impression.
+    localStorage.setItem("fetch_has_scraped_once", "1");
+    if (typeof window.fetchExtPromoNotifyScrape === "function") {
+      window.fetchExtPromoNotifyScrape();
+    }
   } catch (err) {
     _stepsAborted = true;
     await stepsPromise.catch(() => {});
 
     if (err.name === "AbortError") {
-      showPanel("emptyState");
-      setStatus("idle", "cancelled");
+      if (_timedOut) {
+        const errorTitle = $("errorTitle");
+        const errorMsg = $("errorMsg");
+        if (errorTitle) errorTitle.textContent = "request timed out";
+        if (errorMsg)
+          errorMsg.textContent =
+            "This site took longer than 35s to respond — it may be slow, blocking scrapers, or the backend is cold-starting. Please retry.";
+        showPanel("errorState");
+        setStatus("error", "timed out — tap retry");
+        showToast("⏱️ request timed out — tap retry", "error", 5000);
+      } else {
+        // Superseded by a newer fetch (user started a different URL) —
+        // nothing went wrong, just quietly reset.
+        showPanel("emptyState");
+        setStatus("idle", "cancelled");
+      }
       return;
     }
 
@@ -1563,6 +1591,26 @@ const appUrlInput = $("appUrl");
 
 heroFetchBtn?.addEventListener("click", () => startFetch("hero"));
 appFetchBtn?.addEventListener("click", () => startFetch("app"));
+
+/* ──────────────────────────────────────────────
+   quick-start example chips — first-run only
+────────────────────────────────────────────── */
+(function initQuickExamples() {
+  const row = $("quickExamplesRow");
+  if (!row) return;
+  if (localStorage.getItem("fetch_has_scraped_once")) {
+    row.classList.add("hidden");
+    return;
+  }
+  row.querySelectorAll(".quick-example-chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      if (appUrlInput) appUrlInput.value = chip.dataset.url;
+      if (heroUrlInput) heroUrlInput.value = chip.dataset.url;
+      row.classList.add("hidden");
+      startFetch("app");
+    });
+  });
+})();
 heroUrlInput?.addEventListener("keydown", (e) => {
   if (e.key === "Enter") startFetch("hero");
 });
